@@ -5,6 +5,10 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   analyze-and-test:
     name: flutter analyze + test
@@ -54,6 +58,42 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit $st
+
+      # Publish results as a PR comment — job summaries/logs require an
+      # authenticated browser session, this keeps failures machine-readable.
+      - name: Publish CI report to PR
+        if: always()
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          touch analyze.log test.log
+          A_EXIT="ok"; T_EXIT="ok"
+          grep -q "exit 0" analyze.log 2>/dev/null || A_EXIT="see below"
+          body_file=$(mktemp)
+          {
+            echo "<!-- trdaily-ci-report -->"
+            echo "## 🤖 CI report (run ${{ github.run_id }})"
+            echo
+            echo '### flutter analyze'
+            echo '```'
+            tail -c 25000 analyze.log
+            echo '```'
+            echo '### flutter test'
+            echo '```'
+            tail -c 35000 test.log
+            echo '```'
+          } > "$body_file"
+          existing=$(gh api "repos/\${{ github.repository }}/issues/1/comments" \
+            --jq '[.[] | select(.body | contains("<!-- trdaily-ci-report -->"))][0].id // empty' 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/\${{ github.repository }}/issues/comments/$existing" \
+              -f body@"$body_file" > /dev/null
+          else
+            gh api -X POST "repos/\${{ github.repository }}/issues/1/comments" \
+              -f body@"$body_file" > /dev/null
+          fi
+          echo "report published"
 
   compile-check:
     name: full compile check (web)
