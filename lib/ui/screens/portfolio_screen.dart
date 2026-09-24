@@ -52,7 +52,7 @@ class _PortfolioScreenState extends State<PortfolioScreen>
                   onPressed: () => _showNotificationSheet(context, st),
                 ),
                 if (unreadNotifs > 0)
-                  PositionDirectional(
+                  PositionedDirectional(
                     top: 6,
                     end: 6,
                     child: Container(
@@ -212,7 +212,7 @@ class _AllocationTab extends StatelessWidget {
                     child: StatTile(
                       label: 'Unrealized P&L',
                       value: TrTheme.money(totalUnrealized, signed: true),
-                      color: TrTheme.pnlColor(totalUnrealized),
+                      valueColor: TrTheme.pnlColor(totalUnrealized),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -220,7 +220,7 @@ class _AllocationTab extends StatelessWidget {
                     child: StatTile(
                       label: 'Realized P&L',
                       value: TrTheme.money(totalRealized, signed: true),
-                      color: TrTheme.pnlColor(totalRealized),
+                      valueColor: TrTheme.pnlColor(totalRealized),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -365,7 +365,7 @@ class _AllocationTab extends StatelessWidget {
                     child: StatTile(
                       label: 'Net Exposure',
                       value: TrTheme.money(breakdown.netExposure, signed: true),
-                      color: TrTheme.pnlColor(breakdown.netExposure),
+                      valueColor: TrTheme.pnlColor(breakdown.netExposure),
                     ),
                   ),
                 ],
@@ -824,7 +824,7 @@ class _PerformanceTabState extends State<_PerformanceTab> {
                     child: StatTile(
                       label: 'Win Rate',
                       value: '${perf.winRatePct.toStringAsFixed(1)}%',
-                      color: perf.winRatePct >= 50 ? TrTheme.up : TrTheme.down,
+                      valueColor: perf.winRatePct >= 50 ? TrTheme.up : TrTheme.down,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -834,7 +834,7 @@ class _PerformanceTabState extends State<_PerformanceTab> {
                       value: perf.profitFactor.isInfinite
                           ? '∞'
                           : perf.profitFactor.toStringAsFixed(2),
-                      color: perf.profitFactor >= 1.5 ? TrTheme.up : TrTheme.textPrimary,
+                      valueColor: perf.profitFactor >= 1.5 ? TrTheme.up : TrTheme.textPrimary,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -842,7 +842,7 @@ class _PerformanceTabState extends State<_PerformanceTab> {
                     child: StatTile(
                       label: 'Total Realized',
                       value: TrTheme.money(perf.totalRealizedPnl, signed: true),
-                      color: TrTheme.pnlColor(perf.totalRealizedPnl),
+                      valueColor: TrTheme.pnlColor(perf.totalRealizedPnl),
                     ),
                   ),
                 ],
@@ -861,7 +861,7 @@ class _PerformanceTabState extends State<_PerformanceTab> {
                     child: StatTile(
                       label: 'Avg Win',
                       value: TrTheme.money(perf.avgWin),
-                      color: TrTheme.up,
+                      valueColor: TrTheme.up,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -869,7 +869,7 @@ class _PerformanceTabState extends State<_PerformanceTab> {
                     child: StatTile(
                       label: 'Avg Loss',
                       value: TrTheme.money(-perf.avgLoss),
-                      color: TrTheme.down,
+                      valueColor: TrTheme.down,
                     ),
                   ),
                 ],

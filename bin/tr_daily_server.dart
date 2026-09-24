@@ -9,7 +9,6 @@ import 'package:tr_daily/core/config.dart';
 import 'package:tr_daily/core/notifications.dart';
 import 'package:tr_daily/core/server_config.dart';
 import 'package:tr_daily/data/market_data_source.dart';
-import 'package:tr_daily/data/models.dart';
 import 'package:tr_daily/engine/scanner.dart';
 import 'package:tr_daily/engine/trader_engine.dart';
 import 'package:tr_daily/risk/risk_manager.dart';

@@ -463,7 +463,7 @@ class _NotificationBell extends StatelessWidget {
           onPressed: () => showAppNotifications(context, state),
         ),
         if (unread > 0)
-          PositionDirectional(
+          PositionedDirectional(
             top: 6,
             end: 6,
             child: Container(
