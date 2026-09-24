@@ -1,9 +1,21 @@
 name: Build APK
 
-# Manual trigger only — builds a release APK on a full-internet runner and
-# commits it back to the branch under artifacts/apk/ so it can be picked up
-# in environments without Google egress (e.g. sandboxed dev boxes).
+# Builds a release APK on a full-internet runner and commits it back to the
+# branch under artifacts/apk/ so it can be picked up in environments without
+# Google egress (e.g. sandboxed dev boxes).
+#
+# Triggers:
+#  - push of a change to THIS file on the target branch (rebuild on change;
+#    the APK-commit step skips re-pushing when bytes are unchanged, so no loop)
+#  - repository_dispatch `build-apk` (manual rebuild: gh api -X POST
+#    repos/{owner}/{repo}/dispatches -f event_type=build-apk)
+#  - workflow_dispatch (visible once the file exists on the default branch)
 on:
+  push:
+    branches: [arena/01a0d503-tr-daily]
+    paths: [.github/workflows/build-apk.yml]
+  repository_dispatch:
+    types: [build-apk]
   workflow_dispatch:
 
 permissions:
