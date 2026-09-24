@@ -146,6 +146,25 @@ class PaperBroker implements Broker {
   @override
   Future<List<Order>> getOpenOrders() async => <Order>[];
 
+  /// Paper fills are immediate — reconstructed from the fill log.
+  @override
+  Future<Order?> getOrder(String orderId) async {
+    final fill = fills.where((f) => f.id == orderId).firstOrNull;
+    if (fill == null) return null;
+    return Order(
+      id: fill.id,
+      symbol: fill.symbol,
+      side: fill.side,
+      type: OrderType.market,
+      status: OrderStatus.filled,
+      qty: fill.qty,
+      filledQty: fill.qty,
+      filledAvgPrice: fill.price,
+      submittedAt: fill.time,
+      filledAt: fill.time,
+    );
+  }
+
   @override
   Future<void> cancelOrder(String orderId) async {}
 

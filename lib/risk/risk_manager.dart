@@ -13,6 +13,11 @@ class RiskConfig {
     this.maxPositionPct = 25,
     this.allowShort = true,
     this.allowTradingWithoutData = false,
+    this.trailingStopAtrMult = 2.0,
+    this.trailingActivateAtrMult = 1.0,
+    this.scaleOutEnabled = true,
+    this.scaleOutAtAtrMult = 1.5,
+    this.scaleOutFraction = 0.5,
   });
 
   /// % of equity risked per trade (distance to stop).
@@ -36,6 +41,18 @@ class RiskConfig {
   final bool allowShort;
   final bool allowTradingWithoutData;
 
+  /// Trail price at [trailingStopAtrMult] × ATR behind the best price since
+  /// entry, activated once the position is [trailingActivateAtrMult] × ATR
+  /// in profit. 0 disables.
+  final double trailingStopAtrMult;
+  final double trailingActivateAtrMult;
+
+  /// Scale out (take partial profit) at [scaleOutAtAtrMult] × ATR, selling
+  /// [scaleOutFraction] of the position.
+  final bool scaleOutEnabled;
+  final double scaleOutAtAtrMult;
+  final double scaleOutFraction;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
         'riskPerTradePct': riskPerTradePct,
         'maxOpenPositions': maxOpenPositions,
@@ -47,6 +64,11 @@ class RiskConfig {
         'maxPositionPct': maxPositionPct,
         'allowShort': allowShort,
         'allowTradingWithoutData': allowTradingWithoutData,
+        'trailingStopAtrMult': trailingStopAtrMult,
+        'trailingActivateAtrMult': trailingActivateAtrMult,
+        'scaleOutEnabled': scaleOutEnabled,
+        'scaleOutAtAtrMult': scaleOutAtAtrMult,
+        'scaleOutFraction': scaleOutFraction,
       };
 
   factory RiskConfig.fromJson(Map<String, dynamic> json) {
@@ -72,6 +94,18 @@ class RiskConfig {
       allowShort: json['allowShort'] as bool? ?? d.allowShort,
       allowTradingWithoutData: json['allowTradingWithoutData'] as bool? ??
           d.allowTradingWithoutData,
+      trailingStopAtrMult:
+          (json['trailingStopAtrMult'] as num?)?.toDouble() ??
+              d.trailingStopAtrMult,
+      trailingActivateAtrMult:
+          (json['trailingActivateAtrMult'] as num?)?.toDouble() ??
+              d.trailingActivateAtrMult,
+      scaleOutEnabled: json['scaleOutEnabled'] as bool? ?? d.scaleOutEnabled,
+      scaleOutAtAtrMult:
+          (json['scaleOutAtAtrMult'] as num?)?.toDouble() ??
+              d.scaleOutAtAtrMult,
+      scaleOutFraction: (json['scaleOutFraction'] as num?)?.toDouble() ??
+          d.scaleOutFraction,
     );
   }
 
@@ -86,6 +120,11 @@ class RiskConfig {
     double? maxPositionPct,
     bool? allowShort,
     bool? allowTradingWithoutData,
+    double? trailingStopAtrMult,
+    double? trailingActivateAtrMult,
+    bool? scaleOutEnabled,
+    double? scaleOutAtAtrMult,
+    double? scaleOutFraction,
   }) =>
       RiskConfig(
         riskPerTradePct: riskPerTradePct ?? this.riskPerTradePct,
@@ -99,6 +138,13 @@ class RiskConfig {
         allowShort: allowShort ?? this.allowShort,
         allowTradingWithoutData:
             allowTradingWithoutData ?? this.allowTradingWithoutData,
+        trailingStopAtrMult:
+            trailingStopAtrMult ?? this.trailingStopAtrMult,
+        trailingActivateAtrMult:
+            trailingActivateAtrMult ?? this.trailingActivateAtrMult,
+        scaleOutEnabled: scaleOutEnabled ?? this.scaleOutEnabled,
+        scaleOutAtAtrMult: scaleOutAtAtrMult ?? this.scaleOutAtAtrMult,
+        scaleOutFraction: scaleOutFraction ?? this.scaleOutFraction,
       );
 }
 

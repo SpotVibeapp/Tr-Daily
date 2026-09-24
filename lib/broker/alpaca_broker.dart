@@ -24,6 +24,9 @@ abstract class Broker {
 
   Future<List<Order>> getOpenOrders();
 
+  /// Fetch a single order by id (used for fill reconciliation).
+  Future<Order?> getOrder(String orderId);
+
   Future<void> cancelOrder(String orderId);
 
   /// Close a position (market order for the full quantity).
@@ -192,6 +195,9 @@ class AlpacaBroker implements Broker {
     if (request.clientOrderId != null) {
       body['client_order_id'] = request.clientOrderId;
     }
+    if (request.extendedHours) {
+      body['extended_hours'] = true;
+    }
     // Bracket orders: native stop/target handling at the broker.
     if (request.takeProfit != null && request.stopLoss != null) {
       body['order_class'] = 'bracket';
@@ -227,6 +233,17 @@ class AlpacaBroker implements Broker {
             DateTime.now(),
         filledAt: DateTime.tryParse((o['filled_at'] as String?) ?? ''),
       );
+
+  @override
+  Future<Order?> getOrder(String orderId) async {
+    try {
+      final raw = await _req('GET', '/v2/orders/$orderId');
+      return _parseOrder(raw);
+    } on BrokerException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
 
   @override
   Future<void> cancelOrder(String orderId) async {

@@ -30,6 +30,7 @@ class AppSettings {
     this.scanIntervalSeconds = 60,
     this.tradeWhileClosed = false,
     this.startEngineOnLaunch = false,
+    this.extendedHours = false,
     RiskConfig? risk,
     EnsembleConfig? ensemble,
     this.allowShort = true,
@@ -55,6 +56,9 @@ class AppSettings {
   int scanIntervalSeconds;
   bool tradeWhileClosed;
   bool startEngineOnLaunch;
+
+  /// Route orders outside 09:30–16:00 ET (Alpaca 4am–8pm ET).
+  bool extendedHours;
   RiskConfig risk;
   EnsembleConfig ensemble;
   bool allowShort;
@@ -72,6 +76,7 @@ class AppSettings {
         'scanIntervalSeconds': scanIntervalSeconds,
         'tradeWhileClosed': tradeWhileClosed,
         'startEngineOnLaunch': startEngineOnLaunch,
+        'extendedHours': extendedHours,
         'risk': risk.toJson(),
         'ensemble': ensemble.toJson(),
         'allowShort': allowShort,
@@ -111,6 +116,7 @@ class AppSettings {
           json['tradeWhileClosed'] as bool? ?? defaults.tradeWhileClosed,
       startEngineOnLaunch:
           json['startEngineOnLaunch'] as bool? ?? defaults.startEngineOnLaunch,
+      extendedHours: json['extendedHours'] as bool? ?? defaults.extendedHours,
       risk: riskJson is Map<String, dynamic>
           ? RiskConfig.fromJson(riskJson)
           : defaults.risk,

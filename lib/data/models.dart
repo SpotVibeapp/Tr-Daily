@@ -133,6 +133,7 @@ class OrderRequest {
     this.clientOrderId,
     this.takeProfit,
     this.stopLoss,
+    this.extendedHours = false,
   });
 
   final String symbol;
@@ -149,6 +150,10 @@ class OrderRequest {
   /// paper broker.
   final double? takeProfit;
   final double? stopLoss;
+
+  /// Route outside regular hours (Alpaca 4am–8pm ET). Ignored by the paper
+  /// simulator (it fills instantly either way).
+  final bool extendedHours;
 }
 
 /// An order as reported by a broker.

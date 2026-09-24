@@ -370,6 +370,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       },
                     ),
                     _switchRow(
+                      'Extended-hours trading',
+                      'Route orders 4am–8pm ET (Alpaca; market orders only)',
+                      s.extendedHours,
+                      (v) {
+                        setState(() => s.extendedHours = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    _switchRow(
                       'Trade while market closed',
                       'Paper only — evaluate setups outside 9:30–16:00 ET',
                       s.tradeWhileClosed,
@@ -477,6 +486,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       },
                       () => _save(silent: true),
                     ),
+                    _sliderRow(
+                      'Trailing stop',
+                      s.risk.trailingStopAtrMult <= 0
+                          ? 'off'
+                          : '${s.risk.trailingStopAtrMult.toStringAsFixed(1)} × ATR '
+                              '(activates at +${s.risk.trailingActivateAtrMult.toStringAsFixed(1)} ATR)',
+                      s.risk.trailingStopAtrMult,
+                      0,
+                      4,
+                      (v) {
+                        setState(() => s.risk =
+                            s.risk.copyWith(trailingStopAtrMult: v));
+                      },
+                      () => _save(silent: true),
+                    ),
+                    _switchRow(
+                      'Scale-out (partial profit)',
+                      'Sell ${((s.risk.scaleOutFraction) * 100).round()}% at '
+                          '+${s.risk.scaleOutAtAtrMult.toStringAsFixed(1)} ATR',
+                      s.risk.scaleOutEnabled,
+                      (v) {
+                        setState(() => s.risk = s.risk.copyWith(scaleOutEnabled: v));
+                        _save(silent: true);
+                      },
+                    ),
+                    if (s.risk.scaleOutEnabled)
+                      _sliderRow(
+                        'Scale-out size',
+                        '${((s.risk.scaleOutFraction) * 100).round()}% of position',
+                        s.risk.scaleOutFraction,
+                        0.25,
+                        0.75,
+                        (v) {
+                          setState(
+                              () => s.risk = s.risk.copyWith(scaleOutFraction: v));
+                        },
+                        () => _save(silent: true),
+                      ),
                     _sliderRow(
                       'Entry threshold',
                       'score ≥ ${s.ensemble.enterThreshold.toStringAsFixed(2)} to trade',

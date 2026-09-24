@@ -63,10 +63,25 @@ confidence = 0.45·trendQuality + 0.30·|signal avg| + 0.15·ADX gate + ML certa
 
 ## 5. Exit logic
 
+Stops and targets are **anchored at entry** (the current scan's suggestions
+never overwrite them — a stop sits where the thesis was invalidated, not
+"1.5 ATR behind wherever price drifted to").
+
 1. Hard stop / target (checked against live price; brackets on Alpaca live).
-2. Score collapses to `|score| ≤ 0.10` → signal no longer supports the trade.
-3. Stance flips → close + attempt opposite entry (still risk-checked).
-4. Daily-loss breaker → flatten everything, halt, re-arm next day.
+2. **Trailing stop** (default 2 × ATR behind the best price since entry,
+   activated once the position is +1 × ATR in profit; ratchets in favor only).
+3. **Scale-out** (default): sell 50% at +1.5 × ATR — locks partial profit,
+   moves the trade to "free money" psychology-wise.
+4. Score collapses to `|score| ≤ 0.10` → signal no longer supports the trade.
+5. Stance flips → close + attempt opposite entry (still risk-checked).
+6. Daily-loss breaker → flatten everything, halt, re-arm next day.
+
+## 5b. PDT awareness (Phase 2)
+
+US pattern-day-trader rule: 4+ round trips in 5 business days without $25k
+equity. The dashboard shows a warning at 3 and a restriction banner at 4
+(broker-reported for live accounts, estimated from the paper fill log).
+Tr-Daily warns — the broker enforces.
 
 ## 6. Execution realism
 

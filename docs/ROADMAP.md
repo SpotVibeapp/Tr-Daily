@@ -16,13 +16,19 @@ next begins.
 - [x] Market-hours logic incl. DST, holidays, early closes
 - [x] CI: `flutter analyze` + `flutter test` + web compile check
 
-## Phase 2 — Live-trading hardening (next)
+## Phase 2 — Live-trading hardening (✅ shipped)
 
-- [ ] End-to-end validation of Alpaca order types against their test suite
-- [ ] Day-trade counter & PDT-rule warnings surfaced in UI
-- [ ] Trailing stops + partial take-profits (scale-out)
-- [ ] Order status reconciliation loop (fills arriving async)
-- [ ] Extended-hours trading flag (Alpaca supports pre/post)
+- [x] Alpaca wire-contract tests (fake HTTP client: payloads, brackets,
+      extended-hours, error mapping, fill reconciliation endpoints)
+- [x] Day-trade counter & PDT-rule warnings surfaced in UI (broker-reported
+      live, estimated from paper fills; 3→warning, 4→restriction banner)
+- [x] Trailing stops (ATR-based, profit-activated, ratchet-only) +
+      partial take-profits (scale-out at ATR milestone)
+- [x] Entry-anchored stops (stops no longer re-derive from live price each
+      scan) + order fill reconciliation loop (poll → filled/rejected events)
+- [x] Extended-hours trading flag (Alpaca 4am–8pm ET)
+
+### Next up
 
 ## Phase 3 — Awareness
 
