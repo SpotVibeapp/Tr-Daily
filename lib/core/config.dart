@@ -2,6 +2,7 @@ import '../broker/alpaca_broker.dart';
 import '../data/models.dart';
 import '../risk/risk_manager.dart';
 import '../strategy/ensemble.dart';
+import 'notifications.dart';
 import 'secrets.dart';
 
 /// Which market-data chain to use.
@@ -33,12 +34,14 @@ class AppSettings {
     this.extendedHours = false,
     RiskConfig? risk,
     EnsembleConfig? ensemble,
+    NotificationConfig? notifications,
     this.allowShort = true,
     this.paperStartingCash = 25000,
   })  : keys = keys ?? const TradingKeys(keyId: '', secretKey: ''),
         watchlist = watchlist ?? List<String>.from(defaultWatchlist),
         risk = risk ?? const RiskConfig(),
-        ensemble = ensemble ?? const EnsembleConfig();
+        ensemble = ensemble ?? const EnsembleConfig(),
+        notifications = notifications ?? const NotificationConfig();
 
   static const List<String> defaultWatchlist = <String>[
     'AAPL',
@@ -61,6 +64,7 @@ class AppSettings {
   bool extendedHours;
   RiskConfig risk;
   EnsembleConfig ensemble;
+  NotificationConfig notifications;
   bool allowShort;
   double paperStartingCash;
 
@@ -79,6 +83,7 @@ class AppSettings {
         'extendedHours': extendedHours,
         'risk': risk.toJson(),
         'ensemble': ensemble.toJson(),
+        'notifications': notifications.toJson(),
         'allowShort': allowShort,
         'paperStartingCash': paperStartingCash,
       };
@@ -90,6 +95,7 @@ class AppSettings {
     final wl = json['watchlist'];
     final riskJson = json['risk'];
     final ensJson = json['ensemble'];
+    final notifJson = json['notifications'];
     final ivName = json['interval'] as String?;
     return AppSettings(
       brokerMode: modeName == 'live' ? BrokerMode.live : BrokerMode.paper,
@@ -123,6 +129,9 @@ class AppSettings {
       ensemble: ensJson is Map<String, dynamic>
           ? EnsembleConfig.fromJson(ensJson)
           : defaults.ensemble,
+      notifications: notifJson is Map<String, dynamic>
+          ? NotificationConfig.fromJson(notifJson)
+          : defaults.notifications,
       allowShort: json['allowShort'] as bool? ?? defaults.allowShort,
       paperStartingCash:
           (json['paperStartingCash'] as num?)?.toDouble() ??

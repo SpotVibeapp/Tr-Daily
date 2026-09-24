@@ -28,20 +28,29 @@ next begins.
       scan) + order fill reconciliation loop (poll → filled/rejected events)
 - [x] Extended-hours trading flag (Alpaca 4am–8pm ET)
 
+## Phase 3 — Portfolio & Awareness (✅ shipped)
+
+- [x] Dedicated **Portfolio Screen**:
+      - Live P&L tracking (unrealized & realized), equity, buying power
+      - Capital allocation breakdown with visual multi-segment asset bar
+      - Detailed open positions view with entry-anchored stop loss, target, and trailing peak
+      - One-tap manual position close with confirmation dialog
+      - Round-trip trade history with win rate, profit factor, average win/loss, hold duration
+- [x] **In-App & Remote Push Notifications**:
+      - Real-time alerts on trade fills, stop hits, profit targets, and circuit breaker halts
+      - In-app notification center drawer with unread badges
+      - 100% free remote push alerts via Discord webhooks and Telegram bots to user's phone
+      - Configurable notification toggles and connectivity test in settings
+
+## Phase 4 — 24/7 Cloud Deployment (✅ shipped)
+
+- [x] Headless pure-Dart engine runner (`bin/tr_daily_server.dart`)
+- [x] Ultra-lightweight multi-stage `Dockerfile` (~30 MB container) and `docker-compose.yml`
+- [x] Linux systemd service configuration (`deploy/tr-daily.service`)
+- [x] HTTP healthcheck and live status API (`/health` and `/status` on port 8080)
+- [x] Complete free-tier setup guide (`docs/CLOUD_DEPLOYMENT.md` covering Oracle Cloud Always-Free, Render, Fly.io, and local Raspberry Pi)
+
 ### Next up
-
-## Phase 3 — Awareness
-
-- [ ] Local notifications on fills, halts, and connection loss
-- [ ] Portfolio screen: aggregate exposure, sector concentration
-- [ ] Daily recap (PnL, win rate, rule attribution)
-
-## Phase 4 — Cloud deployment (optional)
-
-- [ ] Reuse the exact same engine in a Dart CLI/server (`dart run trdaily_cli`)
-- [ ] Host on a free tier (Fly.io/Railway/Render) so trades run while your
-      phone is off
-- [ ] Remote control: the app becomes a dashboard for the hosted engine
 
 ## Phase 5 — Strategy lab
 

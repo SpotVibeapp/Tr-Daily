@@ -66,6 +66,22 @@ void main() {
       expect(back.brokerMode.name, 'paper');
       expect(back.watchlist, isNotEmpty);
       expect(back.risk.maxDailyLossPct, 2.0);
+      expect(back.notifications.enabled, isTrue);
+    });
+
+    test('notifications survive json roundtrip', () {
+      final s = AppSettings()
+        ..notifications = const NotificationConfig(
+          enabled: true,
+          notifyOnFills: false,
+          notifyOnStops: true,
+          webhookUrl: 'https://discord.com/webhook/test',
+        );
+      final back = AppSettings.fromJson(s.toJson());
+      expect(back.notifications.enabled, isTrue);
+      expect(back.notifications.notifyOnFills, isFalse);
+      expect(back.notifications.notifyOnStops, isTrue);
+      expect(back.notifications.webhookUrl, 'https://discord.com/webhook/test');
     });
   });
 }

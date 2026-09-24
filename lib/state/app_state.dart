@@ -7,6 +7,7 @@ import '../analysis/estimator.dart';
 import '../broker/alpaca_broker.dart';
 import '../broker/paper_broker.dart';
 import '../core/config.dart';
+import '../core/notifications.dart';
 import '../core/secrets.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
@@ -40,6 +41,7 @@ class AppState extends ChangeNotifier {
   late MarketScanner scanner;
   late RiskManager risk;
   late SignalEnsemble ensemble;
+  late NotificationService notifications;
 
   AccountInfo account = const AccountInfo(
     equity: 0,
@@ -76,6 +78,7 @@ class AppState extends ChangeNotifier {
 
     ensemble = SignalEnsemble(config: settings.ensemble);
     risk = RiskManager(config: settings.risk);
+    notifications = NotificationService(config: settings.notifications);
 
     dataSource = _buildDataSource(settings);
     scanner = MarketScanner(
@@ -159,9 +162,45 @@ class AppState extends ChangeNotifier {
       if (ev.type == 'trade' || ev.type == 'exit' || ev.type == 'halt') {
         unawaited(_persistPaper());
         unawaited(refreshAccount());
+        _dispatchNotification(ev);
       }
       notifyListeners();
     });
+  }
+
+  void _dispatchNotification(EngineEvent ev) {
+    if (ev.type == 'trade') {
+      notifications.dispatch(
+        title: 'Trade executed · ${ev.symbol ?? "Order"}',
+        body: ev.message,
+        type: NotificationType.tradeFill,
+        severity: NotificationSeverity.info,
+        symbol: ev.symbol,
+      );
+    } else if (ev.type == 'exit') {
+      final msgLower = ev.message.toLowerCase();
+      final isStop = msgLower.contains('stop');
+      final isTarget = msgLower.contains('profit');
+      notifications.dispatch(
+        title: isStop
+            ? 'Stop triggered · ${ev.symbol ?? ""}'
+            : (isTarget ? 'Target reached · ${ev.symbol ?? ""}' : 'Position closed · ${ev.symbol ?? ""}'),
+        body: ev.message,
+        type: isStop
+            ? NotificationType.stopLoss
+            : (isTarget ? NotificationType.takeProfit : NotificationType.tradeFill),
+        severity: isTarget ? NotificationSeverity.success : NotificationSeverity.warning,
+        symbol: ev.symbol,
+      );
+    } else if (ev.type == 'halt') {
+      notifications.dispatch(
+        title: '🚨 Circuit Breaker Halted',
+        body: ev.message,
+        type: NotificationType.dailyLossHalt,
+        severity: NotificationSeverity.critical,
+        symbol: ev.symbol,
+      );
+    }
   }
 
   // ------------------------------------------------------------ settings
@@ -179,6 +218,7 @@ class AppState extends ChangeNotifier {
     settings = next;
     ensemble.config = settings.ensemble;
     risk.config = settings.risk;
+    notifications.config = settings.notifications;
     await _json.writeObject(_kSettings, settings.toJson());
 
     if (rebuildData) {
@@ -339,6 +379,24 @@ class AppState extends ChangeNotifier {
     return const <PaperFill>[];
   }
 
+  /// Close an open position immediately via broker market order.
+  Future<void> closePosition(String symbol) async {
+    try {
+      await broker.closePosition(symbol);
+      _log('exit', 'manually closed position for $symbol');
+      await refreshAccount();
+      await _persistPaper();
+      notifyListeners();
+    } catch (e) {
+      lastError = 'failed to close $symbol: $e';
+      _log('error', lastError!);
+      notifyListeners();
+    }
+  }
+
+  /// Entry-anchored risk targets/stops for symbol, if managed by the engine.
+  PositionMeta? getPositionMeta(String symbol) => engine?.positionMeta[symbol];
+
   Future<void> resetPaperAccount() async {
     final next = settings;
     engine?.stop();
@@ -381,6 +439,7 @@ class AppState extends ChangeNotifier {
     // ChangeNotifier is disposed (crashed the app-smoke test, and could
     // crash the app itself on shutdown).
     unawaited(_engineSub?.cancel());
+    notifications.dispose();
     engine?.stop();
     engine?.dispose();
     super.dispose();

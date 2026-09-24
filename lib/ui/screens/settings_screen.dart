@@ -22,6 +22,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _keyId;
   late TextEditingController _secret;
   late TextEditingController _symbolInput;
+  late TextEditingController _webhookUrl;
+  late TextEditingController _telegramBotToken;
+  late TextEditingController _telegramChatId;
   bool _obscureSecret = true;
   bool _saving = false;
 
@@ -32,6 +35,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _keyId = TextEditingController(text: s.keys.keyId);
     _secret = TextEditingController(text: s.keys.secretKey);
     _symbolInput = TextEditingController();
+    _webhookUrl = TextEditingController(text: s.notifications.webhookUrl);
+    _telegramBotToken = TextEditingController(text: s.notifications.telegramBotToken);
+    _telegramChatId = TextEditingController(text: s.notifications.telegramChatId);
   }
 
   @override
@@ -39,6 +45,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _keyId.dispose();
     _secret.dispose();
     _symbolInput.dispose();
+    _webhookUrl.dispose();
+    _telegramBotToken.dispose();
+    _telegramChatId.dispose();
     super.dispose();
   }
 
@@ -565,6 +574,139 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       },
                       () => _save(silent: true),
                     ),
+                  ],
+                ),
+              ),
+
+              _sectionTitle('NOTIFICATIONS & WEBHOOK ALERTS'),
+              _card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _switchRow(
+                      'Enable notifications',
+                      'Receive in-app alerts and webhook pushes',
+                      s.notifications.enabled,
+                      (v) {
+                        setState(() => s.notifications =
+                            s.notifications.copyWith(enabled: v));
+                        _save(silent: true);
+                      },
+                    ),
+                    if (s.notifications.enabled) ...[
+                      _switchRow(
+                        'Trade fills',
+                        'Alert when buys, sells or scale-outs execute',
+                        s.notifications.notifyOnFills,
+                        (v) {
+                          setState(() => s.notifications =
+                              s.notifications.copyWith(notifyOnFills: v));
+                          _save(silent: true);
+                        },
+                      ),
+                      _switchRow(
+                        'Stop loss & targets',
+                        'Alert when stops ratchet or profit targets hit',
+                        s.notifications.notifyOnStops,
+                        (v) {
+                          setState(() => s.notifications =
+                              s.notifications.copyWith(notifyOnStops: v));
+                          _save(silent: true);
+                        },
+                      ),
+                      _switchRow(
+                        'Circuit breaker halts',
+                        'Urgent alert if daily loss limit triggers',
+                        s.notifications.notifyOnHalts,
+                        (v) {
+                          setState(() => s.notifications =
+                              s.notifications.copyWith(notifyOnHalts: v));
+                          _save(silent: true);
+                        },
+                      ),
+                      _switchRow(
+                        'PDT warnings',
+                        'Alert when approaching 3 day-trades limit',
+                        s.notifications.notifyOnPdt,
+                        (v) {
+                          setState(() => s.notifications =
+                              s.notifications.copyWith(notifyOnPdt: v));
+                          _save(silent: true);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Free Remote Push Alerts (Phone / Desktop)',
+                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Receive real-time phone notifications while running 24/7 in the cloud. '
+                        'Create a free Discord webhook or Telegram bot — completely free with zero subscription fees.',
+                        style: TextStyle(color: TrTheme.textMuted, fontSize: 11.5, height: 1.3),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _webhookUrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Discord or Slack Webhook URL',
+                          hintText: 'https://discord.com/api/webhooks/...',
+                        ),
+                        onChanged: (v) {
+                          s.notifications = s.notifications.copyWith(webhookUrl: v.trim());
+                          _save(silent: true);
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _telegramBotToken,
+                              decoration: const InputDecoration(
+                                labelText: 'Telegram Bot Token',
+                                hintText: '123456:ABC-DEF...',
+                              ),
+                              onChanged: (v) {
+                                s.notifications = s.notifications.copyWith(telegramBotToken: v.trim());
+                                _save(silent: true);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _telegramChatId,
+                              decoration: const InputDecoration(
+                                labelText: 'Telegram Chat ID',
+                                hintText: 'e.g. 987654321',
+                              ),
+                              onChanged: (v) {
+                                s.notifications = s.notifications.copyWith(telegramChatId: v.trim());
+                                _save(silent: true);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.send, size: 15),
+                        label: const Text('Send Test Alert'),
+                        onPressed: () async {
+                          final ok = await st.notifications.sendTestNotification();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(ok
+                                    ? 'Test alert sent! Check your notification center or webhook.'
+                                    : 'Notifications are disabled in settings.'),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
                   ],
                 ),
               ),

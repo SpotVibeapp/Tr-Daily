@@ -86,6 +86,10 @@ class TraderEngine {
   /// symbol -> entry-time management state (in-memory; reseeded on restart).
   final Map<String, PositionMeta> _meta = <String, PositionMeta>{};
 
+  /// Read-only snapshot of entry-anchored management state for open positions.
+  Map<String, PositionMeta> get positionMeta =>
+      Map<String, PositionMeta>.unmodifiable(_meta);
+
   /// Orders awaiting confirmation (fill reconciliation).
   final Map<String, Order> _pendingOrders = <String, Order>{};
 

@@ -8,6 +8,7 @@ import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import 'home_shell.dart';
+import 'portfolio_screen.dart';
 
 /// Account overview, engine controls, open positions.
 class DashboardScreen extends StatelessWidget {
@@ -23,6 +24,8 @@ class DashboardScreen extends StatelessWidget {
         _SessionBadge(state: state),
         const SizedBox(width: 8),
         _ModeChip(state: state),
+        const SizedBox(width: 4),
+        _NotificationBell(state: state),
       ],
       trailing: _EngineBanner(state: state),
       child: AnimatedBuilder(
@@ -439,6 +442,47 @@ class _EngineBanner extends StatelessWidget {
             : 'last scan ${formatEasternTime(last)}',
         style: const TextStyle(color: TrTheme.textMuted, fontSize: 11),
       ),
+    );
+  }
+}
+
+class _NotificationBell extends StatelessWidget {
+  const _NotificationBell({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final unread = state.notifications.unreadCount;
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        IconButton(
+          tooltip: 'Notifications',
+          icon: const Icon(Icons.notifications_outlined, color: TrTheme.textMuted, size: 20),
+          onPressed: () => showAppNotifications(context, state),
+        ),
+        if (unread > 0)
+          PositionDirectional(
+            top: 6,
+            end: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
+              decoration: BoxDecoration(
+                color: TrTheme.accent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                unread > 99 ? '99+' : '$unread',
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

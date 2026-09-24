@@ -4,6 +4,7 @@ import '../../state/app_state.dart';
 import '../screens/backtest_screen.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/history_screen.dart';
+import '../screens/portfolio_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/signals_screen.dart';
 import '../theme.dart';
@@ -25,6 +26,7 @@ class _HomeShellState extends State<HomeShell> {
   Widget build(BuildContext context) {
     final screens = <Widget>[
       DashboardScreen(state: widget.state),
+      PortfolioScreen(state: widget.state),
       SignalsScreen(state: widget.state),
       BacktestScreen(state: widget.state),
       HistoryScreen(state: widget.state),
@@ -38,7 +40,7 @@ class _HomeShellState extends State<HomeShell> {
         selectedIndex: _index,
         onDestinationSelected: (i) {
           setState(() => _index = i);
-          if (i == 1) {
+          if (i == 2) {
             widget.state.scanNow();
           }
         },
@@ -47,6 +49,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.dashboard_outlined),
             selectedIcon: Icon(Icons.dashboard),
             label: 'Dashboard',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.pie_chart_outline),
+            selectedIcon: Icon(Icons.pie_chart),
+            label: 'Portfolio',
           ),
           NavigationDestination(
             icon: Icon(Icons.show_chart_outlined),

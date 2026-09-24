@@ -28,7 +28,10 @@ default**, with live trading as an explicit, confirmed opt-in.
 | **Broker abstraction** | `PaperBroker` (instant local simulation w/ slippage) and `AlpacaBroker` (free commission-free US stocks, paper + live) |
 | **Backtester** | Strict no-lookahead: signals on bar close, fills at next open, intrabar stops, gap-aware. Metrics: return, win rate, profit factor, max DD, Sharpe, expectancy, buy & hold comparison |
 | **Engine** | Periodic scan → score → risk-check → execute → manage exits, during market hours (9:30–16:00 ET, holidays & early closes handled) |
-| **UI** | Dark trading theme: dashboard (equity, positions, engine switch), live signals, candlestick chart with overlays, backtests, trade log, settings |
+| **Notifications** | In-app notification center + 100% free remote phone push via Discord webhooks and Telegram bots on fills, stops, and halts |
+| **Portfolio** | Asset allocation breakdown, visual capital progress bar, live P&L, stop/target tracking, and round-trip trade performance history |
+| **24/7 Cloud** | Headless server runtime (`bin/tr_daily_server.dart`), Docker container (~30MB), systemd service, and HTTP healthcheck (:8080) |
+| **UI** | Dark trading theme: dashboard, portfolio, live signals, candlestick chart with overlays, backtest lab, history, settings |
 
 ## Quick start (VS Code + Flutter)
 
@@ -87,6 +90,20 @@ broker's website; Tr-Daily only stores an API key pair on your device.
    (requires typing `TRADE REAL MONEY`), and start small.
 
 See [docs/CONNECT_BROKER.md](docs/CONNECT_BROKER.md) for the step-by-step.
+
+## Running 24/7 in the Cloud (Free)
+
+To run automated trades while your phone is asleep or turned off:
+
+```bash
+# Run headless server locally or in a VPS
+dart run bin/tr_daily_server.dart
+
+# Or run with Docker
+docker compose up -d
+```
+
+See [docs/CLOUD_DEPLOYMENT.md](docs/CLOUD_DEPLOYMENT.md) for complete step-by-step instructions on setting up 100% free hosting with Oracle Cloud Always-Free or Render/Fly.io, plus setting up free Discord or Telegram phone push alerts.
 
 ## Is it really free?
 

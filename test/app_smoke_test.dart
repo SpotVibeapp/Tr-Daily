@@ -17,9 +17,14 @@ void main() {
     expect(find.text('Dashboard'), findsOneWidget);
 
     // Bottom nav reaches other screens.
+    await tester.tap(find.text('Portfolio'));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('TOTAL PORTFOLIO VALUE'), findsOneWidget);
+
     await tester.tap(find.text('Settings'));
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('BROKER & BANK CONNECTION'), findsOneWidget);
+    expect(find.text('NOTIFICATIONS & WEBHOOK ALERTS'), findsOneWidget);
 
     // Unmount before disposing the state to keep listener teardown clean.
     await tester.pumpWidget(const SizedBox());
