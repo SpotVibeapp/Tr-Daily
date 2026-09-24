@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tr_daily/core/config.dart';
+import 'package:tr_daily/data/models.dart';
 import 'package:tr_daily/risk/risk_manager.dart';
 import 'package:tr_daily/strategy/ensemble.dart';
 

@@ -91,7 +91,9 @@ void main() {
       final b = bollinger(closes);
       expect(b.upper[39], closeTo(100, 1e-9));
       expect(b.lower[39], closeTo(100, 1e-9));
-      expect(b.percentB[39], isNotNull);
+      // Zero-range bands: %B is 0/0 undefined — stays null by design
+      // (bollingerSignal treats null as neutral).
+      expect(b.percentB[39], isNull);
     });
 
     test('upper > middle > lower on varying data', () {
