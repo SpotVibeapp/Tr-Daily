@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  releases: write
 
 jobs:
   apk:
@@ -101,5 +102,30 @@ jobs:
             git commit -m "chore(release): add v${APP_VERSION} APKs (arm64-v8a + universal) for device testing"
             git push origin "HEAD:${BRANCH:-main}"
           fi
+        env:
+          BRANCH: arena/01a0d503-tr-daily
+
+      # The sandbox that consumes this branch cannot reach uploads.github.com,
+      # so release assets are uploaded from the runner, which has full egress.
+      - name: Publish APKs to GitHub Release
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
+          TAG="v${APP_VERSION}-test-apk"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes
+          fi
+          gh release create "$TAG" \
+            artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk \
+            artifacts/apk/Tr-Daily-v${APP_VERSION}-universal.apk \
+            --title "Tr-Daily v${APP_VERSION} — test APKs" \
+            --notes "Release APKs for on-device testing.
+
+- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk (19 MB) — 64-bit phones (recommended)
+- Tr-Daily-v${APP_VERSION}-universal.apk (52 MB) — all ABIs
+
+Built by the Build APK workflow on Flutter stable. Signed with the CI debug key (v2) — fine for sideloading, not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily" \
+            --target "${BRANCH}"
+          echo "Release $TAG published."
         env:
           BRANCH: arena/01a0d503-tr-daily
