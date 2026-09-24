@@ -112,6 +112,14 @@ jobs:
           set -euo pipefail
           APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
           TAG="v${APP_VERSION}-test-apk"
+          {
+            printf '%s\n' "Release APKs for on-device testing."
+            printf '%s\n' ""
+            printf '%s\n' "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk (19 MB) — 64-bit phones (recommended)"
+            printf '%s\n' "- Tr-Daily-v${APP_VERSION}-universal.apk (52 MB) — all ABIs"
+            printf '%s\n' ""
+            printf '%s\n' "Built by the Build APK workflow on Flutter stable. Signed with the CI debug key (v2) — fine for sideloading, not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily"
+          } > /tmp/release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes
           fi
@@ -119,12 +127,7 @@ jobs:
             artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk \
             artifacts/apk/Tr-Daily-v${APP_VERSION}-universal.apk \
             --title "Tr-Daily v${APP_VERSION} — test APKs" \
-            --notes "Release APKs for on-device testing.
-
-- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk (19 MB) — 64-bit phones (recommended)
-- Tr-Daily-v${APP_VERSION}-universal.apk (52 MB) — all ABIs
-
-Built by the Build APK workflow on Flutter stable. Signed with the CI debug key (v2) — fine for sideloading, not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily" \
+            --notes-file /tmp/release-notes.md \
             --target "${BRANCH}"
           echo "Release $TAG published."
         env:
