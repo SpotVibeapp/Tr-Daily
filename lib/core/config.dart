@@ -98,7 +98,7 @@ class AppSettings {
               (m) => m.name == dpName,
               orElse: () => DataProviderMode.auto,
             ),
-      watchlist: wl is List
+      watchlist: wl is List<dynamic>
           ? wl.map((s) => s.toString().toUpperCase()).toList()
           : List<String>.from(defaultWatchlist),
       interval: BarInterval.values.firstWhere(
@@ -111,11 +111,11 @@ class AppSettings {
           json['tradeWhileClosed'] as bool? ?? defaults.tradeWhileClosed,
       startEngineOnLaunch:
           json['startEngineOnLaunch'] as bool? ?? defaults.startEngineOnLaunch,
-      risk: riskJson is Map
-          ? RiskConfig.fromJson(riskJson.cast<String, dynamic>())
+      risk: riskJson is Map<String, dynamic>
+          ? RiskConfig.fromJson(riskJson)
           : defaults.risk,
-      ensemble: ensJson is Map
-          ? EnsembleConfig.fromJson(ensJson.cast<String, dynamic>())
+      ensemble: ensJson is Map<String, dynamic>
+          ? EnsembleConfig.fromJson(ensJson)
           : defaults.ensemble,
       allowShort: json['allowShort'] as bool? ?? defaults.allowShort,
       paperStartingCash:

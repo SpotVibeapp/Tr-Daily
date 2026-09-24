@@ -61,7 +61,7 @@ class JsonStore {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) return decoded;
-      if (decoded is Map) return decoded.cast<String, dynamic>();
+      if (decoded is Map<String, dynamic>) return decoded;
       return null;
     } catch (_) {
       return null;

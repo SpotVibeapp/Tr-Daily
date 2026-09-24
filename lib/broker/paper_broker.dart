@@ -363,7 +363,7 @@ class PaperBroker implements Broker {
           : DateTime.tryParse(json['lastEquityDay'] as String),
     );
     final lp = json['lastPrice'];
-    if (lp is Map) {
+    if (lp is Map<String, dynamic>) {
       lp.forEach((k, v) => broker.lastPrice[k.toString()] = (v as num).toDouble());
     }
     final ds = json['dayStartEquity'];

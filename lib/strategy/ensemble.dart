@@ -81,8 +81,8 @@ class EnsembleConfig {
     final defaults = const EnsembleConfig();
     final w = json['weights'];
     return EnsembleConfig(
-      weights: w is Map
-          ? w.map((k, v) => MapEntry(k.toString(), (v as num).toDouble()))
+      weights: w is Map<String, dynamic>
+          ? w.map((k, v) => MapEntry(k, (v as num).toDouble()))
           : defaults.weights,
       trendWeight: (json['trendWeight'] as num?)?.toDouble() ?? defaults.trendWeight,
       structureWeight:
