@@ -1,0 +1,93 @@
+name: Build APK
+
+# Manual trigger only — builds a release APK on a full-internet runner and
+# commits it back to the branch under artifacts/apk/ so it can be picked up
+# in environments without Google egress (e.g. sandboxed dev boxes).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    name: Build release APK (arm64 + universal)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      # Repo ships lib-only on purpose (see .gitignore); generate the
+      # android/ platform folder from the installed SDK's templates.
+      - name: Generate android/ platform folder
+        run: flutter create --platforms android --project-name tr_daily .
+
+      - name: Ensure required Android SDK components
+        run: |
+          set -uo pipefail
+          SM=""
+          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          elif command -v sdkmanager >/dev/null 2>&1; then
+            SM="$(command -v sdkmanager)"
+          fi
+          if [ -z "$SM" ]; then
+            echo "::warning::sdkmanager not found — relying on preinstalled SDK components"
+            exit 0
+          fi
+          yes | "$SM" --licenses >/dev/null 2>&1 || true
+          # Install a broad set so whatever compileSdk the current Flutter
+          # template pins is covered.
+          for p in "platform-tools" "platforms;android-34" "platforms;android-35" "platforms;android-36" "build-tools;34.0.0" "build-tools;35.0.0"; do
+            "$SM" "$p" >/dev/null 2>&1 || true
+          done
+          "$SM" --list_installed 2>/dev/null | head -20
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build release APK (universal + per-ABI)
+        run: |
+          flutter build apk --release
+          flutter build apk --release --split-per-abi
+
+      - name: Collect APKs
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
+          mkdir -p artifacts/apk
+          cp build/app/outputs/flutter-apk/app-release.apk            "artifacts/apk/Tr-Daily-v${APP_VERSION}-universal.apk"
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk  "artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk"
+          ls -lh artifacts/apk/
+
+      - name: Upload APKs as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tr-daily-apks
+          path: artifacts/apk/
+          if-no-files-found: error
+
+      - name: Commit APKs to branch
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
+          git config user.name "SpotVibeapp"
+          git config user.email "288161393+SpotVibeapp@users.noreply.github.com"
+          git add artifacts/apk/
+          if git diff --cached --quiet; then
+            echo "APKs unchanged — nothing to commit."
+          else
+            git commit -m "chore(release): add v${APP_VERSION} APKs (arm64-v8a + universal) for device testing"
+            git push origin "HEAD:${BRANCH:-main}"
+          fi
+        env:
+          BRANCH: arena/01a0d503-tr-daily
