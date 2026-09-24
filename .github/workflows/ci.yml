@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  analyze-and-test:
+    name: flutter analyze + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Outputs are echoed into the job summary so failures are readable
+      # even when raw logs are inaccessible.
+      - name: Analyze
+        shell: bash
+        run: |
+          set +e
+          flutter analyze 2>&1 | tee analyze.log
+          st=${PIPESTATUS[0]}
+          {
+            echo "## flutter analyze — exit $st"
+            echo '```'
+            tail -c 120000 analyze.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $st
+
+      - name: Test
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          flutter test 2>&1 | tee test.log
+          st=${PIPESTATUS[0]}
+          {
+            echo "## flutter test — exit $st"
+            echo '```'
+            tail -c 120000 test.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $st
+
+      # Publish results as a PR comment — job summaries/logs require an
+      # authenticated browser session, this keeps failures machine-readable.
+      - name: Publish CI report to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const read = (p) => {
+              try { return fs.readFileSync(p, 'utf8'); } catch (e) { return '(no output captured)'; }
+            };
+            const tail = (s, n) => (s.length > n ? s.slice(-n) : s);
+            const body = [
+              '<!-- trdaily-ci-report -->',
+              `## 🤖 CI report \`run ${context.runId}\``,
+              '',
+              '### flutter analyze',
+              '```',
+              tail(read('analyze.log'), 24000),
+              '```',
+              '',
+              '### flutter test',
+              '```',
+              tail(read('test.log'), 34000),
+              '```',
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: 1, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes('<!-- trdaily-ci-report -->'));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              core.info(`updated comment ${existing.id}`);
+            } else {
+              const created = await github.rest.issues.createComment({ owner, repo, issue_number: 1, body });
+              core.info(`created comment ${created.data.id}`);
+            }
+
+  compile-check:
+    name: full compile check (web)
+    runs-on: ubuntu-latest
+    needs: analyze-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Scaffold platform folders
+        # Repo ships lib-only (see README); generate platform targets for build.
+        run: flutter create --project-name tr_daily --platforms=web .
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build web
+        shell: bash
+        run: |
+          set +e
+          flutter build web --no-tree-shake-icons 2>&1 | tee build.log
+          st=${PIPESTATUS[0]}
+          {
+            echo "## flutter build web — exit $st"
+            echo '```'
+            tail -c 120000 build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $st
