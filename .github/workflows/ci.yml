@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 jobs:
   analyze-and-test:
@@ -63,37 +64,41 @@ jobs:
       # authenticated browser session, this keeps failures machine-readable.
       - name: Publish CI report to PR
         if: always()
-        env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          touch analyze.log test.log
-          A_EXIT="ok"; T_EXIT="ok"
-          grep -q "exit 0" analyze.log 2>/dev/null || A_EXIT="see below"
-          body_file=$(mktemp)
-          {
-            echo "<!-- trdaily-ci-report -->"
-            echo "## 🤖 CI report (run ${{ github.run_id }})"
-            echo
-            echo '### flutter analyze'
-            echo '```'
-            tail -c 25000 analyze.log
-            echo '```'
-            echo '### flutter test'
-            echo '```'
-            tail -c 35000 test.log
-            echo '```'
-          } > "$body_file"
-          existing=$(gh api "repos/\${{ github.repository }}/issues/1/comments" \
-            --jq '[.[] | select(.body | contains("<!-- trdaily-ci-report -->"))][0].id // empty' 2>/dev/null || true)
-          if [ -n "$existing" ]; then
-            gh api -X PATCH "repos/\${{ github.repository }}/issues/comments/$existing" \
-              -f body@"$body_file" > /dev/null
-          else
-            gh api -X POST "repos/\${{ github.repository }}/issues/1/comments" \
-              -f body@"$body_file" > /dev/null
-          fi
-          echo "report published"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const read = (p) => {
+              try { return fs.readFileSync(p, 'utf8'); } catch (e) { return '(no output captured)'; }
+            };
+            const tail = (s, n) => (s.length > n ? s.slice(-n) : s);
+            const body = [
+              '<!-- trdaily-ci-report -->',
+              `## 🤖 CI report \`run ${context.runId}\``,
+              '',
+              '### flutter analyze',
+              '```',
+              tail(read('analyze.log'), 24000),
+              '```',
+              '',
+              '### flutter test',
+              '```',
+              tail(read('test.log'), 34000),
+              '```',
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: 1, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes('<!-- trdaily-ci-report -->'));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              core.info(`updated comment ${existing.id}`);
+            } else {
+              const created = await github.rest.issues.createComment({ owner, repo, issue_number: 1, body });
+              core.info(`created comment ${created.data.id}`);
+            }
 
   compile-check:
     name: full compile check (web)
