@@ -155,7 +155,7 @@ void main() {
   group('donchian', () {
     test('excludes current bar (breakout reference)', () {
       final candles = <Candle>[
-        for (var i = 0; i < 30; i++) c(i, 100, 100 + i, 99, 100),
+        for (var i = 0; i < 30; i++) c(i, 100.0, 100.0 + i, 99.0, 100.0),
       ];
       // Current bar has the highest high (i=29); upper must reflect i<29.
       final d = donchian(candles, period: 20);

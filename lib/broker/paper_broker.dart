@@ -231,7 +231,8 @@ class PaperBroker implements Broker {
     final goingLong = isBuy;
     var realized = 0.0;
 
-    if (existing != null && existing.short == goingLong) {
+    // Same direction = increase: long + buy, or short + sell.
+    if (existing != null && existing.short != goingLong) {
       // Increase position.
       final newQty = existing.qty + qty;
       final newAvg =
@@ -247,7 +248,8 @@ class PaperBroker implements Broker {
     } else if (existing != null) {
       // Reduce / flip.
       final closeQty = qty < existing.qty ? qty : existing.qty;
-      final dir = existing.short ? 1.0 : -1.0; // profit if price moved against entry
+      // Long profits when fill > entry; short profits when fill < entry.
+      final dir = existing.short ? -1.0 : 1.0;
       realized = (fillPx - existing.avgEntryPrice) * closeQty * dir;
       cash += isBuy ? -notional : notional;
       // For a short, entering (sell) credits cash; covering debits.

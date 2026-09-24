@@ -56,7 +56,7 @@ void main() {
       expect(back.risk.scaleOutFraction, 0.4);
       expect(back.ensemble.enterThreshold, 0.55);
       expect(back.scanIntervalSeconds, 45);
-      expect(back.interval.name, '5m');
+      expect(back.interval, BarInterval.fiveMin);
     });
 
     test('defaults intact for fresh settings', () {

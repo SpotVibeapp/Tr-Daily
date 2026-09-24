@@ -60,7 +60,12 @@ void main() {
     final r = await bt.run(symbol: 'TEST', bars: 300);
     // Invariant: every trade has exit ≥ entry and sane prices/quantities.
     for (final t in r.trades) {
-      expect(t.exitTime!, greaterThanOrEqualTo(t.entryTime));
+      // DateTime has no < operator — compare with isBefore/isAtSameMomentAs.
+      expect(
+        t.exitTime!.isAfter(t.entryTime) ||
+            t.exitTime!.isAtSameMomentAs(t.entryTime),
+        isTrue,
+      );
       expect(t.entryPrice, greaterThan(0));
       expect(t.exitPrice!, greaterThan(0));
       expect(t.qty, greaterThan(0));

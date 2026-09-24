@@ -149,8 +149,12 @@ class AppState extends ChangeNotifier {
         risk: risk,
       );
 
+  StreamSubscription<EngineEvent>? _engineSub;
+
   void _wireEngine(TraderEngine e) {
-    e.events.listen((ev) {
+    // Cancel any previous wiring (engine rebuilds on broker switch).
+    unawaited(_engineSub?.cancel());
+    _engineSub = e.events.listen((ev) {
       _log(ev.type, ev.message);
       if (ev.type == 'trade' || ev.type == 'exit' || ev.type == 'halt') {
         unawaited(_persistPaper());
@@ -372,6 +376,11 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    // Drop engine events BEFORE disposing — engine.stop() emits one, and its
+    // async delivery would otherwise hit notifyListeners() after this
+    // ChangeNotifier is disposed (crashed the app-smoke test, and could
+    // crash the app itself on shutdown).
+    unawaited(_engineSub?.cancel());
     engine?.stop();
     engine?.dispose();
     super.dispose();
