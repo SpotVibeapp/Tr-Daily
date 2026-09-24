@@ -70,39 +70,34 @@ DateTime easternToUtc(DateTime et) {
       .subtract(Duration(hours: offset));
 }
 
-/// NYSE holiday for [year] (observed date), or null.
-DateTime? observedMarketHoliday(int year) {
+/// All NYSE full-day closures for [year], on their observed dates.
+List<DateTime> marketHolidays(int year) {
   DateTime observed(DateTime d) {
     if (d.weekday == DateTime.saturday) return d.subtract(const Duration(days: 1));
     if (d.weekday == DateTime.sunday) return d.add(const Duration(days: 1));
     return d;
   }
 
-  final holidays = <DateTime>[
+  return <DateTime>[
     observed(DateTime(year, 1, 1)), // New Year's Day
     DateTime(year, 1, nthWeekdayOfMonth(year, 1, DateTime.monday, 3)), // MLK
     DateTime(year, 2, nthWeekdayOfMonth(year, 2, DateTime.monday, 3)), // Presidents
     easterSunday(year).subtract(const Duration(days: 2)), // Good Friday
     DateTime(year, 5, lastWeekdayOfMonth(year, 5, DateTime.monday)), // Memorial
     observed(DateTime(year, 6, 19)), // Juneteenth
-    observed(DateTime(year, 7, 4)), // Independence
+    observed(DateTime(year, 7, 4)), // Independence Day (observed)
     DateTime(year, 9, nthWeekdayOfMonth(year, 9, DateTime.monday, 1)), // Labor
     DateTime(year, 11, nthWeekdayOfMonth(year, 11, DateTime.thursday, 4)), // Thanksgiving
     observed(DateTime(year, 12, 25)), // Christmas
   ];
-  for (final h in holidays) {
-    if (h.year == year) return h;
-  }
-  return null;
 }
 
 /// True when [day] (ET calendar day) is a market holiday.
 bool isMarketHoliday(DateTime day) {
-  final h = observedMarketHoliday(day.year);
-  return h != null &&
-      h.year == day.year &&
-      h.month == day.month &&
-      h.day == day.day;
+  for (final h in marketHolidays(day.year)) {
+    if (h.month == day.month && h.day == day.day) return true;
+  }
+  return false;
 }
 
 /// Early-close day (13:00 ET): Christmas Eve, day after Thanksgiving,

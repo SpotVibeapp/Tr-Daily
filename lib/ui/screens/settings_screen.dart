@@ -86,7 +86,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text(
               'Live mode routes REAL orders to your funded brokerage account. '
               'Automated trading can lose money — rapidly. Tr-Daily has no way '

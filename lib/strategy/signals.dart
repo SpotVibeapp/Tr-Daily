@@ -1,6 +1,5 @@
 import '../analysis/estimator.dart';
 import '../analysis/indicators.dart';
-import '../analysis/structure.dart';
 import '../data/models.dart';
 
 /// Individual chart-trend signals. Each returns a lean in [-1, 1]

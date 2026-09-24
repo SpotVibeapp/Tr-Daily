@@ -7,7 +7,6 @@ import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/candle_chart.dart';
 import '../widgets/common.dart';
-import 'home_shell.dart';
 
 /// Candlestick chart + live signal detail for one symbol.
 class ChartScreen extends StatefulWidget {

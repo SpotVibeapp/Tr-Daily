@@ -48,8 +48,10 @@ void main() {
       expect(isMarketOpen(DateTime.utc(2026, 7, 3, 14)), isFalse);
       expect(isMarketHoliday(DateTime(2026, 7, 3)), isTrue);
       // Jul 4 2026 is a Saturday → observed Friday.
-      expect(observedMarketHoliday(2026)!.month, 7);
-      expect(observedMarketHoliday(2026)!.day, 3);
+      expect(
+        marketHolidays(2026).where((h) => h.month == 7 && h.day == 3),
+        isNotEmpty,
+      );
     });
 
     test('open on a normal Wednesday mid-session', () {
@@ -65,10 +67,11 @@ void main() {
 
   group('holidays & early closes', () {
     test('Thanksgiving 2026 = Nov 26', () {
-      final t = observedMarketHoliday(2026);
-      // Christmas (Dec 25) is returned last in list order… check explicitly:
       expect(isMarketHoliday(DateTime(2026, 11, 26)), isTrue);
-      expect(t, isNotNull);
+      expect(
+        marketHolidays(2026).where((h) => h.month == 11 && h.day == 26),
+        isNotEmpty,
+      );
     });
 
     test('early close day after Thanksgiving (Nov 27, 2026)', () {

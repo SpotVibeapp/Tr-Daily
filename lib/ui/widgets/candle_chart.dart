@@ -2,7 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-import '../data/models.dart';
+import '../../data/models.dart';
 import '../theme.dart';
 
 /// Everything the candlestick painter draws.

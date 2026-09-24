@@ -1,11 +1,11 @@
-import 'dart:math';
-
-import '../data/models.dart';
-
 /// Classic technical indicators. All functions are **causal**: value at index
 /// `i` uses only data at `indices <= i` (no lookahead), so they are safe for
 /// both live scanning and backtests. Warm-up positions are `null`.
 library;
+
+import 'dart:math';
+
+import '../data/models.dart';
 
 /// Simple moving average.
 List<double?> sma(List<double> values, int period) {

@@ -58,8 +58,9 @@ class TraderEngine {
     required this.risk,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now {
-    if (broker is PaperBroker) {
-      broker.setAllowShort(settings.allowShort);
+    final b = broker;
+    if (b is PaperBroker) {
+      b.setAllowShort(settings.allowShort);
     }
   }
 

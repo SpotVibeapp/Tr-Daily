@@ -75,7 +75,7 @@ void main() {
       expect(snap.note, contains('1 more'));
     });
 
-    test('restricted at 4 without $25k, exempt with $25k', () {
+    test('restricted at 4 without \$25k, exempt with \$25k', () {
       // Window {9,8,5,4,3} June 2026 → four round trips on business days.
       final fills = <({String symbol, DateTime time, bool isBuy})>[];
       for (final d in [3, 4, 5, 8]) {

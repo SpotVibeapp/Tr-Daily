@@ -1,5 +1,3 @@
-import 'dart:math';
-
 /// Lightweight, dependency-free machine learning.
 ///
 /// A tiny online logistic-regression model learns the relationship between
@@ -7,6 +5,8 @@ import 'dart:math';
 /// deliberately simple: fully inspectable, deterministic, cheap to run on a
 /// phone, and honest about its confidence (it reports training sample count).
 library;
+
+import 'dart:math';
 
 /// Standardizes features with running statistics (Welford).
 class FeatureNormalizer {

@@ -166,9 +166,9 @@ void main() {
 
   group('linreg slope', () {
     test('positive for rising series, negative for falling', () {
-      final up = linregSlope([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5);
+      final up = linregSlope([1.0, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5);
       expect(up.last!, greaterThan(0));
-      final down = linregSlope([10, 9, 8, 7, 6, 5, 4, 3, 2, 1], 5);
+      final down = linregSlope([10.0, 9, 8, 7, 6, 5, 4, 3, 2, 1], 5);
       expect(down.last!, lessThan(0));
     });
   });

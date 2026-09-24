@@ -183,8 +183,8 @@ class AlpacaBroker implements Broker {
         TimeInForce.ioc => 'ioc',
         TimeInForce.fok => 'fok',
       },
-      'qty': request.qty?.toString(),
-      'notional': request.notional?.toString(),
+      'qty': request.qty == null ? null : _numStr(request.qty!),
+      'notional': request.notional == null ? null : _numStr(request.notional!),
     }..removeWhere((k, v) => v == null);
     if (request.limitPrice != null) {
       body['limit_price'] = request.limitPrice!.toStringAsFixed(2);
@@ -262,4 +262,8 @@ class AlpacaBroker implements Broker {
 
   static double? _f(dynamic v) =>
       v == null ? null : double.tryParse(v.toString());
+
+  /// Alpaca wants whole share counts as integers ('10', not '10.0').
+  static String _numStr(double v) =>
+      v == v.truncateToDouble() ? v.toStringAsFixed(0) : '$v';
 }

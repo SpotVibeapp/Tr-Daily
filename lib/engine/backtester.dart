@@ -154,7 +154,9 @@ class Backtester {
       if (open != null || pendingEntry != Stance.flat) {
         if (pendingExit && open != null) {
           final exitPrice = _fillPrice(bar.open, short: open!.side == Stance.short, slippage: true);
-          equity += _exitAt(open!, bar.time, exitPrice, 'signal exit').grossPnl;
+          final closed = _exitAt(open!, bar.time, exitPrice, 'signal exit');
+          trades.add(closed);
+          equity += closed.grossPnl;
           open = null;
           pendingExit = false;
         }
@@ -191,20 +193,26 @@ class Backtester {
 
         if (hitStop && hitTarget) {
           // Same-bar both-hit: assume stop first (conservative).
-          equity += _exitAt(open!, bar.time, stop, 'stop loss').grossPnl;
+          final closed = _exitAt(open!, bar.time, stop, 'stop loss');
+          trades.add(closed);
+          equity += closed.grossPnl;
           open = null;
         } else if (hitStop) {
           // Gap through stop fills at the (worse) open.
           final px = open!.side == Stance.long
               ? (bar.open < stop ? bar.open : stop)
               : (bar.open > stop ? bar.open : stop);
-          equity += _exitAt(open!, bar.time, px, 'stop loss').grossPnl;
+          final closed = _exitAt(open!, bar.time, px, 'stop loss');
+          trades.add(closed);
+          equity += closed.grossPnl;
           open = null;
         } else if (hitTarget) {
           final px = open!.side == Stance.long
               ? (bar.open > target ? bar.open : target)
               : (bar.open < target ? bar.open : target);
-          equity += _exitAt(open!, bar.time, px, 'take profit').grossPnl;
+          final closed = _exitAt(open!, bar.time, px, 'take profit');
+          trades.add(closed);
+          equity += closed.grossPnl;
           open = null;
         }
       }
@@ -214,10 +222,7 @@ class Backtester {
       final bundle = IndicatorBundle(window);
       final snapshot = estimator.estimate(window);
 
-      double? mlLean;
       if (model != null) {
-        final x = [for (final f in order) snapshot.features[f] ?? 0.0];
-        mlLean = model.isUsable ? 2 * model.predictRaw(x) - 1 : null;
         // Train on completed example: features up to t-1, label from t.
         if (t > config.warmupBars + 1) {
           final prev = estimator.estimate(history.sublist(0, t));
@@ -255,7 +260,10 @@ class Backtester {
             pendingEntry = sig.stance;
             pendingQty = qty;
             entryScore = sig.score;
-            _armStops(sig.stance, snapshot.atrValue, bar.close);
+            final (armedStop, armedTarget) =
+                _armStops(sig.stance, snapshot.atrValue, bar.close);
+            stop = armedStop;
+            target = armedTarget;
           } else {
             pendingEntry = Stance.flat;
             pendingQty = null;
@@ -269,7 +277,10 @@ class Backtester {
           pendingEntry = sig.stance;
           pendingQty = qty;
           entryScore = sig.score;
-          _armStops(sig.stance, snapshot.atrValue, bar.close);
+          final (armedStop, armedTarget) =
+                _armStops(sig.stance, snapshot.atrValue, bar.close);
+            stop = armedStop;
+            target = armedTarget;
         }
       }
 
@@ -293,7 +304,9 @@ class Backtester {
       final px = open!.side == Stance.short
           ? (lastBar.close + lastBar.close * config.slippagePct / 100)
           : (lastBar.close - lastBar.close * config.slippagePct / 100);
-      equity += _exitAt(open!, lastBar.time, px, 'end of test').grossPnl;
+      final closed = _exitAt(open!, lastBar.time, px, 'end of test');
+      trades.add(closed);
+      equity += closed.grossPnl;
       open = null;
     }
 
@@ -320,14 +333,16 @@ class Backtester {
   }
 
   /// Arm stop/target for a pending entry decided at [price] with ATR [a].
-  void _armStops(Stance stance, double? a, double price) {
+  /// Returns (stop, target) — callers keep them as run()-local state.
+  (double, double) _armStops(Stance stance, double? a, double price) {
     final atr = (a != null && a > 0) ? a : price * 0.01;
-    stop = stance == Stance.long
+    final s = stance == Stance.long
         ? price - config.risk.stopLossAtrMult * atr
         : price + config.risk.stopLossAtrMult * atr;
-    target = stance == Stance.long
+    final tgt = stance == Stance.long
         ? price + config.risk.takeProfitAtrMult * atr
         : price - config.risk.takeProfitAtrMult * atr;
+    return (s, tgt);
   }
 
   double _fillPrice(double open, {required bool short, required bool slippage}) {
@@ -336,11 +351,11 @@ class Backtester {
     return short ? open - slip : open + slip;
   }
 
-  /// Record a completed trade (exit) and add it to the log. Returns the
-  /// completed copy so callers can settle its (immutable) PnL.
+  /// Build the completed copy of an open trade at exit. Callers add it to
+  /// the log and settle its PnL (keeps all state inside run()).
   StrategyTrade _exitAt(
       StrategyTrade t, DateTime time, double price, String reason) {
-    final done = StrategyTrade(
+    return StrategyTrade(
       symbol: t.symbol,
       side: t.side,
       entryTime: t.entryTime,
@@ -351,8 +366,6 @@ class Backtester {
       exitReason: reason,
       fees: t.fees,
     );
-    trades.add(done);
-    return done;
   }
 
   /// Position sizing identical in spirit to RiskManager, simplified for tests.
@@ -364,20 +377,20 @@ class Backtester {
     int t,
   ) {
     final window = history.sublist(max(0, t - 13), t + 1);
-    double? a;
-    if (window.length >= 14) {
-      a = 0.0;
+    var atrSum = 0.0;
+    var hasAtr = window.length >= 14;
+    if (hasAtr) {
       var prevClose = window.first.close;
       for (var i = 1; i < window.length; i++) {
         final hl = window[i].high - window[i].low;
         final hc = (window[i].high - prevClose).abs();
         final lc = (window[i].low - prevClose).abs();
-        a += max(hl, max(hc, lc));
+        atrSum += max(hl, max(hc, lc));
         prevClose = window[i].close;
       }
-      a /= (window.length - 1);
+      atrSum /= (window.length - 1);
     }
-    final atr = (a != null && a > 0) ? a : bar.close * 0.01;
+    final atr = (hasAtr && atrSum > 0) ? atrSum : bar.close * 0.01;
     final stopDist = config.risk.stopLossAtrMult * atr;
     if (stopDist <= 0) return null;
     if (sig.confidence < config.risk.minConfidenceToTrade) return null;

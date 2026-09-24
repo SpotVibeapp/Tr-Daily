@@ -118,9 +118,12 @@ class PaperBroker implements Broker {
 
   /// Called on day change to refresh the day-PnL baseline.
   void rollDay(DateTime day) {
-    final key = day.toIso8601String().substring(0, 10);
-    if (_lastEquityDay != key) {
-      _lastEquityDay = key;
+    final last = _lastEquityDay;
+    if (last == null ||
+        last.year != day.year ||
+        last.month != day.month ||
+        last.day != day.day) {
+      _lastEquityDay = day;
       _dayStartEquity = _equity;
     }
   }

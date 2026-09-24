@@ -26,9 +26,9 @@ void main() {
       );
       expect(v.allowed, isTrue);
       final qty = v.suggestedQty!;
-      // risk$250 (1% of 25k) / $3 stop ≈ 83 shares (floored).
-      expect(qty, greaterThanOrEqualTo(80));
-      expect(qty, lessThanOrEqualTo(84));
+      // Risk sizing wants ~83 (=$250 / $3 stop) but the default 25%
+      // single-position cap limits it to floor(6250/100) = 62 shares.
+      expect(qty, 62);
       expect(v.stopPrice, closeTo(97, 1e-9));
       expect(v.targetPrice, closeTo(105, 1e-9));
     });
