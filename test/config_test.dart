@@ -52,9 +52,15 @@ void main() {
         ..extendedHours = true
         ..risk = const RiskConfig(scaleOutFraction: 0.4)
         ..ensemble = const EnsembleConfig(enterThreshold: 0.55)
-        ..scanIntervalSeconds = 45;
+        ..scanIntervalSeconds = 45
+        ..fitToBudget = false
+        ..budgetShareCeiling = 8
+        ..paperStartingCash = 100;
       final back = AppSettings.fromJson(s.toJson());
       expect(back.extendedHours, isTrue);
+      expect(back.fitToBudget, isFalse);
+      expect(back.budgetShareCeiling, 8);
+      expect(back.paperStartingCash, 100);
       expect(back.risk.scaleOutFraction, 0.4);
       expect(back.ensemble.enterThreshold, 0.55);
       expect(back.scanIntervalSeconds, 45);
@@ -68,6 +74,8 @@ void main() {
       expect(back.watchlist, isNotEmpty);
       expect(back.risk.maxDailyLossPct, 2.0);
       expect(back.notifications.enabled, isTrue);
+      expect(back.fitToBudget, isTrue);
+      expect(back.budgetShareCeiling, 5);
     });
 
     test('notifications survive json roundtrip', () {

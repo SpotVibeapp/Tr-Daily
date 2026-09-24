@@ -77,8 +77,23 @@ jobs:
           set -euo pipefail
           APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
           mkdir -p artifacts/apk
+          # Drop the previous version so a phone download cannot grab a stale APK.
+          find artifacts/apk -maxdepth 1 -type f \( -name 'Tr-Daily-v*.apk' -o -name 'Tr-Daily-v*.apk.b64' -o -name 'README.txt' \) -delete
           cp build/app/outputs/flutter-apk/app-release.apk            "artifacts/apk/Tr-Daily-v${APP_VERSION}-universal.apk"
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk  "artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk"
+          base64 -w 0 "artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk" \
+            > "artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk.b64"
+          printf '%s\n' \
+            "APK artifacts for on-device testing of Tr-Daily v${APP_VERSION}." \
+            "" \
+            "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk      raw APK (64-bit phones — recommended)" \
+            "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk.b64  base64 text copy of the arm64 APK." \
+            "                                     Recover with: base64 -d <file.b64> > <file.apk>" \
+            "- Tr-Daily-v${APP_VERSION}-universal.apk      raw APK (all ABIs)" \
+            "" \
+            "Install this build, not an older v0.1.0 file. Fit-to-cash is on:" \
+            "a small account skips names one share cannot buy." \
+            > artifacts/apk/README.txt
           ls -lh artifacts/apk/
 
       - name: Upload APKs as artifacts
@@ -94,7 +109,7 @@ jobs:
           APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
           git config user.name "SpotVibeapp"
           git config user.email "288161393+SpotVibeapp@users.noreply.github.com"
-          git add artifacts/apk/
+          git add -A artifacts/apk/
           if git diff --cached --quiet; then
             echo "APKs unchanged — nothing to commit."
           else

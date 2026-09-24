@@ -54,6 +54,38 @@ void main() {
       expect(v.suggestedQty!, lessThanOrEqualTo(25));
     });
 
+    test('100 dollar account cannot buy a share above the 25% cap', () {
+      final rm = RiskManager(config: const RiskConfig());
+      final v = rm.entry(
+        account: acct(equity: 100, bp: 100),
+        positions: const [],
+        price: 180,
+        atr: 2,
+        stance: Stance.long,
+        confidence: 0.9,
+        day: DateTime(2026, 6, 10, 10),
+      );
+      expect(v.allowed, isFalse);
+      expect(v.haltReason, contains('exceeds budget'));
+      expect(maxAffordableSharePrice(acct(equity: 100, bp: 100), const RiskConfig()), 25);
+    });
+
+    test('100 dollar account can buy a whole share of a 4 dollar name', () {
+      final rm = RiskManager(config: const RiskConfig());
+      final v = rm.entry(
+        account: acct(equity: 100, bp: 100),
+        positions: const [],
+        price: 4,
+        atr: 0.2,
+        stance: Stance.long,
+        confidence: 0.9,
+        day: DateTime(2026, 6, 10, 10),
+      );
+      expect(v.allowed, isTrue);
+      expect(v.suggestedQty, 2);
+      expect(v.suggestedQty! * 4, lessThanOrEqualTo(25));
+    });
+
     test('denies when confidence below threshold', () {
       final rm = RiskManager(
           config: const RiskConfig(minConfidenceToTrade: 0.5));

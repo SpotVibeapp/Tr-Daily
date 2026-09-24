@@ -4,6 +4,8 @@ import '../../broker/alpaca_broker.dart';
 import '../../core/pdt.dart';
 import '../../core/time.dart';
 import '../../data/models.dart';
+import '../../engine/budget.dart';
+import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -149,8 +151,9 @@ class DashboardScreen extends StatelessWidget {
                             ),
                             Text(
                               state.engineRunning
-                                  ? 'Scanning ${state.settings.watchlist.length} symbols '
-                                      'every ${state.settings.scanIntervalSeconds}s'
+                                  ? 'Scanning ${state.settings.watchlist.length} watchlist'
+                                      '${state.budget.last.sleeve.isEmpty ? '' : ' + ${state.budget.last.sleeve.length} budget'}'
+                                      ' names every ${state.settings.scanIntervalSeconds}s'
                                   : 'Start it to scan & trade automatically',
                               style: const TextStyle(
                                 color: TrTheme.textMuted,
@@ -172,6 +175,8 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
+
+                _BudgetBanner(state: state),
 
                 if (state.risk.isHalted)
                   Container(
@@ -403,6 +408,79 @@ class _SessionBadge extends StatelessWidget {
     return TagChip(
       label: sessionLabel(now),
       color: open ? TrTheme.up : TrTheme.warn,
+    );
+  }
+}
+
+class _BudgetBanner extends StatelessWidget {
+  const _BudgetBanner({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!state.settings.fitToBudget) return const SizedBox.shrink();
+    final maxPx = maxAffordableSharePrice(state.account, state.settings.risk);
+    final snap = state.budget.last;
+    final small = maxPx > 0 && maxPx < 80;
+    if (!small && !snap.active) return const SizedBox.shrink();
+    final ceiling = state.settings.budgetShareCeiling <= 0
+        ? BudgetSession.defaultPreferredCeiling
+        : state.settings.budgetShareCeiling;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: TrTheme.accent.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: TrTheme.accent.withOpacity(0.45)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'FITTING TRADES TO CASH',
+              style: TextStyle(
+                color: TrTheme.accent,
+                fontSize: 10,
+                letterSpacing: 1,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'One new share can cost up to ${TrTheme.money(maxPx)} '
+              '(${state.settings.risk.maxPositionPct.round()}% of equity). '
+              'More expensive watchlist names are skipped. If none fit, listed '
+              'stocks at or under ${TrTheme.money(ceiling)} are scanned instead. '
+              'Not OTC penny stocks.',
+              style: const TextStyle(
+                color: TrTheme.textMuted,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+            if (snap.sleeve.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Budget names: ${snap.sleeve.join(', ')}',
+                style: const TextStyle(
+                  color: TrTheme.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ] else if (snap.summary.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                snap.summary,
+                style: const TextStyle(color: TrTheme.textMuted, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

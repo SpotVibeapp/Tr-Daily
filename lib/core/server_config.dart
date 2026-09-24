@@ -42,6 +42,9 @@ class ServerConfig {
     final maxPositions = int.tryParse(env['MAX_OPEN_POSITIONS'] ?? '5') ?? 5;
     final extendedHours = (env['EXTENDED_HOURS'] ?? 'false').toLowerCase() == 'true';
     final allowShort = (env['ALLOW_SHORT'] ?? 'true').toLowerCase() != 'false';
+    final fitToBudget = (env['FIT_TO_BUDGET'] ?? 'true').toLowerCase() != 'false';
+    final budgetCeiling =
+        double.tryParse(env['BUDGET_SHARE_CEILING'] ?? '5') ?? 5;
 
     final dpStr = (env['DATA_PROVIDER'] ?? 'auto').toLowerCase();
     final dataProvider = switch (dpStr) {
@@ -66,6 +69,8 @@ class ServerConfig {
       scanIntervalSeconds: scanInterval,
       extendedHours: extendedHours,
       allowShort: allowShort,
+      fitToBudget: fitToBudget,
+      budgetShareCeiling: budgetCeiling,
       risk: RiskConfig(
         riskPerTradePct: riskPerTrade,
         maxDailyLossPct: maxDailyLoss,

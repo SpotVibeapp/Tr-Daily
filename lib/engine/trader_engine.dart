@@ -8,6 +8,7 @@ import '../core/time.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../risk/risk_manager.dart';
+import 'budget.dart';
 import 'scanner.dart';
 
 enum EngineState { stopped, starting, running, halted }
@@ -56,8 +57,10 @@ class TraderEngine {
     required this.scanner,
     required this.settings,
     required this.risk,
+    BudgetSession? budget,
     DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now {
+  })  : budget = budget ?? BudgetSession(),
+        _clock = clock ?? DateTime.now {
     final b = broker;
     if (b is PaperBroker) {
       b.setAllowShort(settings.allowShort);
@@ -69,7 +72,11 @@ class TraderEngine {
   final MarketScanner scanner;
   final AppSettings settings;
   final RiskManager risk;
+  final BudgetSession budget;
   final DateTime Function() _clock;
+
+  String? _lastBudgetSummary;
+  DateTime? _lastBudgetEmitAt;
 
   final StreamController<EngineEvent> _events =
       StreamController<EngineEvent>.broadcast();
@@ -97,6 +104,17 @@ class TraderEngine {
 
   /// Reconciliation view for the UI: orders not yet confirmed filled.
   List<Order> get pendingOrders => List<Order>.unmodifiable(_pendingOrders.values);
+
+  void _noteBudget(String summary, DateTime now) {
+    if (summary.isEmpty) return;
+    final recent = _lastBudgetSummary == summary &&
+        _lastBudgetEmitAt != null &&
+        now.difference(_lastBudgetEmitAt!) < const Duration(minutes: 15);
+    if (recent) return;
+    _lastBudgetSummary = summary;
+    _lastBudgetEmitAt = now;
+    _emit('info', summary);
+  }
 
   void _emit(String type, String message,
       {SignalScore? signal, String? symbol}) {
@@ -146,14 +164,28 @@ class TraderEngine {
     cycleCount++;
 
     try {
-      // 1) Fresh prices for every watchlist symbol.
+      // Held names stay in the scan even after they leave the watchlist,
+      // which is how a budget-sleeve position still gets exit management.
+      final extraHeld = <String>[];
+      try {
+        final pre = await broker.getPositions();
+        for (final p in pre) {
+          final sym = p.symbol.toUpperCase();
+          final onList = settings.watchlist
+              .any((w) => w.toUpperCase() == sym);
+          if (!onList && !extraHeld.contains(sym)) extraHeld.add(sym);
+        }
+      } catch (e) {
+        _emit('error', 'could not load positions before scan: $e');
+      }
+
+      // 1) Fresh prices for the watchlist (plus anything already held).
       final outcome = await scanner.scan(
-        settings.watchlist,
+        <String>[...settings.watchlist, ...extraHeld],
         interval: settings.interval,
         now: now,
       );
       lastScanAt = now;
-      lastSignals = outcome.signals;
       if (outcome.hasErrors) {
         lastError = outcome.errors.entries.map((e) => '${e.key}: ${e.value}').join('; ');
         lastErrorAt = now;
@@ -169,7 +201,66 @@ class TraderEngine {
         }
       }
 
-      final account = await broker.getAccount();
+      var account = await broker.getAccount();
+      var signals = outcome.signals;
+
+      if (budget.shouldScreen(
+        settings: settings,
+        account: account,
+        watchlistSignals: outcome.signals,
+        now: now,
+      )) {
+        _emit(
+          'info',
+          'Watchlist does not fit this account. Checking listed names you can afford…',
+        );
+      }
+      final advice = await budget.advise(
+        settings: settings,
+        account: account,
+        watchlistSignals: outcome.signals,
+        source: source,
+        now: now,
+      );
+      if (advice.sleeve.isNotEmpty) {
+        final have = signals.map((s) => s.symbol.toUpperCase()).toSet();
+        final extra = advice.sleeve.where((s) => !have.contains(s)).toList();
+        if (extra.isNotEmpty) {
+          final previousSource = scanner.source;
+          scanner.source = liveScanSource(source);
+          final ScanOutcome sleeveOutcome;
+          try {
+            sleeveOutcome = await scanner.scan(
+              extra,
+              interval: settings.interval,
+              now: now,
+            );
+          } finally {
+            scanner.source = previousSource;
+          }
+          if (broker is PaperBroker) {
+            final pb = broker as PaperBroker;
+            for (final s in sleeveOutcome.signals) {
+              pb.setPrice(s.symbol, s.price);
+            }
+          }
+          signals = <SignalScore>[...signals, ...sleeveOutcome.signals]
+            ..sort((a, b) => b.score.abs().compareTo(a.score.abs()));
+          if (sleeveOutcome.hasErrors) {
+            final sleeveError = sleeveOutcome.errors.entries
+                .map((e) => '${e.key}: ${e.value}')
+                .join('; ');
+            lastError = lastError == null
+                ? sleeveError
+                : '$lastError; $sleeveError';
+            lastErrorAt = now;
+          }
+          account = await broker.getAccount();
+        }
+      }
+      if (advice.active) _noteBudget(advice.summary, now);
+      lastSignals = signals;
+
       final positions = await broker.getPositions();
 
       // 3) Daily-loss circuit breaker.
@@ -184,20 +275,28 @@ class TraderEngine {
 
       // 4) Manage open positions: entry-anchored stops, trailing, scale-out,
       //    ensemble exits.
-      await _manageExits(outcome.signals, positions);
+      await _manageExits(signals, positions);
 
       // 5) Consider new entries (re-fetch positions after exits).
       if (sessionOpen || settings.tradeWhileClosed) {
         final openPositions = await broker.getPositions();
         final heldSymbols = openPositions.map((p) => p.symbol).toSet();
-        for (final sig in outcome.signals) {
+        final cap = settings.fitToBudget ? budget.last.maxSharePrice : null;
+        final blockShorts = settings.fitToBudget &&
+            account.equity > 0 &&
+            account.equity < 2000;
+        for (final sig in signals) {
           if (sig.stance == Stance.flat) continue;
           if (heldSymbols.contains(sig.symbol)) continue;
+          // Whole shares only. A name above the cash cap is skipped here so
+          // the log is one summary, not a denial per ticker every minute.
+          if (cap != null && (cap <= 0 || sig.price > cap + 1e-6)) continue;
+          if (blockShorts && sig.stance == Stance.short) continue;
           await _tryEnter(sig, account, openPositions, now);
         }
       }
       _emit('scan',
-          'scan #${outcome.signals.length} symbols · ${outcome.signals.where((s) => s.stance != Stance.flat).length} setups');
+          'scan #${signals.length} symbols · ${signals.where((s) => s.stance != Stance.flat).length} setups');
     } catch (e) {
       lastError = e.toString();
       lastErrorAt = now;

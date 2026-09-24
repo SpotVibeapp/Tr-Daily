@@ -12,6 +12,7 @@ import '../core/secrets.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../engine/backtester.dart';
+import '../engine/budget.dart';
 import '../engine/scanner.dart';
 import '../engine/trader_engine.dart';
 import '../risk/risk_manager.dart';
@@ -42,6 +43,10 @@ class AppState extends ChangeNotifier {
   late RiskManager risk;
   late SignalEnsemble ensemble;
   late NotificationService notifications;
+
+  /// Shared with the engine so a manual scan and the auto-trader use one
+  /// quote cache for the small-account sleeve.
+  final BudgetSession budget = BudgetSession();
 
   AccountInfo account = const AccountInfo(
     equity: 0,
@@ -150,6 +155,7 @@ class AppState extends ChangeNotifier {
         scanner: scanner,
         settings: settings,
         risk: risk,
+        budget: budget,
       );
 
   StreamSubscription<EngineEvent>? _engineSub;
@@ -298,7 +304,7 @@ class AppState extends ChangeNotifier {
         settings.watchlist,
         interval: settings.interval,
       );
-      signals = out.signals;
+      var merged = out.signals;
       if (out.hasErrors) {
         lastError =
             out.errors.entries.map((e) => '${e.key}: ${e.value}').join('; ');
@@ -308,10 +314,67 @@ class AppState extends ChangeNotifier {
         for (final s in out.signals) {
           pb.setPrice(s.symbol, s.price);
         }
-        await _persistPaper();
       }
+      if (settings.fitToBudget) {
+        final acct = await broker.getAccount();
+        account = acct;
+        if (budget.shouldScreen(
+          settings: settings,
+          account: acct,
+          watchlistSignals: out.signals,
+        )) {
+          _log(
+            'info',
+            'Watchlist does not fit this account. Checking listed names you can afford…',
+          );
+        }
+        final advice = await budget.advise(
+          settings: settings,
+          account: acct,
+          watchlistSignals: out.signals,
+          source: dataSource,
+        );
+        if (advice.sleeve.isNotEmpty) {
+          final have = merged.map((s) => s.symbol.toUpperCase()).toSet();
+          final extra = advice.sleeve.where((s) => !have.contains(s)).toList();
+          if (extra.isNotEmpty) {
+            final previousSource = scanner.source;
+            scanner.source = liveScanSource(dataSource);
+            final ScanOutcome sleeveOut;
+            try {
+              sleeveOut = await scanner.scan(
+                extra,
+                interval: settings.interval,
+              );
+            } finally {
+              scanner.source = previousSource;
+            }
+            merged = <SignalScore>[...merged, ...sleeveOut.signals]
+              ..sort((a, b) => b.score.abs().compareTo(a.score.abs()));
+            if (broker is PaperBroker) {
+              final pb = broker as PaperBroker;
+              for (final s in sleeveOut.signals) {
+                pb.setPrice(s.symbol, s.price);
+              }
+            }
+            if (sleeveOut.hasErrors) {
+              final sleeveError = sleeveOut.errors.entries
+                  .map((e) => '${e.key}: ${e.value}')
+                  .join('; ');
+              lastError = lastError == null
+                  ? sleeveError
+                  : '$lastError; $sleeveError';
+            }
+          }
+        }
+        if (advice.active && advice.summary.isNotEmpty) {
+          _log('info', advice.summary);
+        }
+      }
+      signals = merged;
+      if (broker is PaperBroker) await _persistPaper();
       _log('scan',
-          'manual scan complete · ${out.signals.length} symbols · source=${out.dataSourceId}');
+          'manual scan complete · ${merged.length} symbols · source=${out.dataSourceId}');
     } catch (e) {
       lastError = '$e';
       _log('error', 'scan failed: $e');

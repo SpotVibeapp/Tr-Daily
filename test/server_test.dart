@@ -15,6 +15,8 @@ void main() {
       expect(config.settings.scanIntervalSeconds, 60);
       expect(config.settings.risk.riskPerTradePct, 1.0);
       expect(config.settings.risk.maxDailyLossPct, 2.0);
+      expect(config.settings.fitToBudget, isTrue);
+      expect(config.settings.budgetShareCeiling, 5);
       expect(config.settings.notifications.hasWebhook, isFalse);
     });
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
+import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -62,6 +63,8 @@ class SignalsScreen extends StatelessWidget {
                 for (final sig in state.signals)
                   _SignalCard(
                     signal: sig,
+                    overBudget: _overBudget(state, sig),
+                    budgetPick: state.budget.last.sleeve.contains(sig.symbol),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => ChartScreen(state: state, symbol: sig.symbol),
@@ -81,6 +84,12 @@ class SignalsScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _overBudget(AppState state, SignalScore sig) {
+  if (!state.settings.fitToBudget) return false;
+  final maxPx = maxAffordableSharePrice(state.account, state.settings.risk);
+  return maxPx > 0 && sig.price > maxPx + 1e-6;
 }
 
 class _EmptyState extends StatelessWidget {
@@ -119,10 +128,17 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _SignalCard extends StatelessWidget {
-  const _SignalCard({required this.signal, required this.onTap});
+  const _SignalCard({
+    required this.signal,
+    required this.onTap,
+    this.overBudget = false,
+    this.budgetPick = false,
+  });
 
   final SignalScore signal;
   final VoidCallback onTap;
+  final bool overBudget;
+  final bool budgetPick;
 
   @override
   Widget build(BuildContext context) {
@@ -170,6 +186,19 @@ class _SignalCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (overBudget) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'Over budget — one share does not fit, so this name is skipped',
+                style: TextStyle(color: TrTheme.warn, fontSize: 11),
+              ),
+            ] else if (budgetPick) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'Fits this account — added because the watchlist was too expensive',
+                style: TextStyle(color: TrTheme.accent, fontSize: 11),
+              ),
+            ],
             const SizedBox(height: 10),
             Row(
               children: [

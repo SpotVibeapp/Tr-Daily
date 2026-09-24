@@ -52,6 +52,7 @@ Then in the app:
 2. **Signals** tab runs manual scans with explainable scores.
 3. **Backtest** tab replays history through the same strategy with real execution rules.
 4. **Settings** lets you change the watchlist, intervals, risk, and data provider.
+5. **Small account:** Fit-to-cash is on by default. If one share of the watchlist costs more than 25% of equity, those names are skipped and the engine scans listed stocks that fit, preferring about $5 and under. Preview it with Settings → Preview with $100 paper cash. A $25,000 paper account still trades the default watchlist.
 
 `flutter analyze` and `flutter test` must be green — CI enforces this on every push.
 

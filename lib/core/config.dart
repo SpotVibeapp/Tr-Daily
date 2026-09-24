@@ -37,6 +37,8 @@ class AppSettings {
     NotificationConfig? notifications,
     this.allowShort = true,
     this.paperStartingCash = 25000,
+    this.fitToBudget = true,
+    this.budgetShareCeiling = 5,
   })  : keys = keys ?? const TradingKeys(keyId: '', secretKey: ''),
         watchlist = watchlist ?? List<String>.from(defaultWatchlist),
         risk = risk ?? const RiskConfig(),
@@ -68,6 +70,14 @@ class AppSettings {
   bool allowShort;
   double paperStartingCash;
 
+  /// Skip names one whole share cannot buy. If nothing on the watchlist
+  /// fits, scan listed lower-priced names (see [budgetShareCeiling]).
+  bool fitToBudget;
+
+  /// Prefer backup names at or under this share price. 0 uses \$5.
+  /// Never overrides the cash cap from [RiskConfig.maxPositionPct].
+  double budgetShareCeiling;
+
   bool get liveTrading => brokerMode == BrokerMode.live && keys.isConfigured;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -86,6 +96,8 @@ class AppSettings {
         'notifications': notifications.toJson(),
         'allowShort': allowShort,
         'paperStartingCash': paperStartingCash,
+        'fitToBudget': fitToBudget,
+        'budgetShareCeiling': budgetShareCeiling,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -136,6 +148,9 @@ class AppSettings {
       paperStartingCash:
           (json['paperStartingCash'] as num?)?.toDouble() ??
               defaults.paperStartingCash,
+      fitToBudget: json['fitToBudget'] as bool? ?? defaults.fitToBudget,
+      budgetShareCeiling: (json['budgetShareCeiling'] as num?)?.toDouble() ??
+          defaults.budgetShareCeiling,
     );
   }
 }

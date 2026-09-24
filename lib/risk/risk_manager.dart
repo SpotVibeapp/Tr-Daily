@@ -166,6 +166,21 @@ class RiskVerdict {
   final double? targetPrice;
 }
 
+/// Highest price at which one whole share still fits the single-position
+/// cap and the broker's buying power. Zero means "do not open a new share".
+///
+/// Buying power of zero is not replaced with equity — a broker that reports
+/// no buying power will reject the order, and sizing as if it wouldn't is
+/// how a small account gets a surprise rejection (or, worse, a size the
+/// cash cannot cover).
+double maxAffordableSharePrice(AccountInfo account, RiskConfig config) {
+  final equity = account.equity <= 0 ? account.cash : account.equity;
+  if (equity <= 0 || config.maxPositionPct <= 0) return 0;
+  if (account.buyingPower <= 0) return 0;
+  final byPosition = equity * config.maxPositionPct / 100;
+  return byPosition < account.buyingPower ? byPosition : account.buyingPower;
+}
+
 /// Position sizing (volatility-aware), exposure caps and the daily-loss
 /// circuit breaker.
 class RiskManager {
@@ -242,6 +257,20 @@ class RiskManager {
         config.maxExposurePct) {
       return RiskVerdict.denied(
           'max exposure reached (${config.maxExposurePct.round()}%)');
+    }
+
+    // Same gate as the 1-share fallback below, but with a reason a person
+    // can act on: the name is too expensive for this account, not "qty <= 0".
+    final maxShare = maxAffordableSharePrice(account, config);
+    if (maxShare <= 0) {
+      return RiskVerdict.denied('no buying power for a new share');
+    }
+    if (price > maxShare + 1e-6) {
+      return RiskVerdict.denied(
+        'one share (\$${price.toStringAsFixed(2)}) exceeds budget '
+        '(max \$${maxShare.toStringAsFixed(2)}, '
+        '${config.maxPositionPct.round()}% of equity or buying power)',
+      );
     }
 
     final a = (atr != null && atr > 0) ? atr : price * 0.01;

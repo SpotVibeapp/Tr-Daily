@@ -139,6 +139,44 @@ class YahooFinanceSource implements MarketDataSource {
     );
     return bars.isEmpty ? null : bars.last.close;
   }
+
+  /// Last daily closes for a budget screen. One small chart request per
+  /// symbol, a few at a time, so a 30-name sleeve check does not open
+  /// 30 intraday histories.
+  Future<Map<String, double>> quoteMany(List<String> symbols) async {
+    final out = <String, double>{};
+    const width = 4;
+    for (var i = 0; i < symbols.length; i += width) {
+      final end = i + width > symbols.length ? symbols.length : i + width;
+      final slice = symbols.sublist(i, end);
+      final batch = await Future.wait(slice.map(_quoteClose));
+      for (final row in batch) {
+        if (row != null) out[row.key] = row.value;
+      }
+    }
+    return out;
+  }
+
+  Future<MapEntry<String, double>?> _quoteClose(String symbol) async {
+    final sym = symbol.toUpperCase();
+    try {
+      final uri = Uri.parse('$_base/$sym?interval=1d&range=5d');
+      final resp = await _client.get(uri, headers: <String, String>{
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+      }).timeout(const Duration(seconds: 12));
+      if (resp.statusCode != 200) return null;
+      final bars = _parseChart(
+        jsonDecode(resp.body) as Map<String, dynamic>,
+        sym,
+        BarInterval.oneDay,
+      );
+      if (bars.isEmpty || bars.last.close <= 0) return null;
+      return MapEntry(sym, bars.last.close);
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 /// Alpaca market data (free IEX feed for basic plans). Requires API keys.
@@ -234,6 +272,48 @@ class AlpacaDataSource implements MarketDataSource {
     final quote = (root['quote'] as Map<String, dynamic>?)?.cast<String, dynamic>();
     final px = quote == null ? null : (quote['ap'] as num? ?? quote['bp'] as num?);
     return px?.toDouble();
+  }
+
+  /// One snapshots call for the budget screen. Empty on any failure so the
+  /// caller can fall through to another live source.
+  Future<Map<String, double>> quoteMany(List<String> symbols) async {
+    if (symbols.isEmpty) return <String, double>{};
+    try {
+      final joined = symbols.map((s) => s.toUpperCase()).join(',');
+      final uri = Uri.parse(
+        '$_base/v2/stocks/snapshots?symbols=$joined&feed=iex',
+      );
+      final resp = await _client
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 20));
+      if (resp.statusCode != 200) return <String, double>{};
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map) return <String, double>{};
+      final asMap = Map<dynamic, dynamic>.from(decoded);
+      final nested = asMap['snapshots'];
+      final raw = nested is Map ? Map<dynamic, dynamic>.from(nested) : asMap;
+      final out = <String, double>{};
+      raw.forEach((key, value) {
+        if (key == 'snapshots' || value is! Map) return;
+        final px = _snapshotPrice(Map<dynamic, dynamic>.from(value as Map));
+        if (px != null && px > 0) out[key.toString().toUpperCase()] = px;
+      });
+      return out;
+    } catch (_) {
+      return <String, double>{};
+    }
+  }
+
+  static double? _snapshotPrice(Map<dynamic, dynamic> snap) {
+    final trade = snap['latestTrade'];
+    final minute = snap['minuteBar'];
+    final daily = snap['dailyBar'];
+    if (trade is Map && trade['p'] is num) return (trade['p'] as num).toDouble();
+    if (minute is Map && minute['c'] is num) {
+      return (minute['c'] as num).toDouble();
+    }
+    if (daily is Map && daily['c'] is num) return (daily['c'] as num).toDouble();
+    return null;
   }
 }
 

@@ -60,6 +60,7 @@ confidence = 0.45·trendQuality + 0.30·|signal avg| + 0.15·ADX gate + ML certa
 | Max position | 25% of equity | Single-name cap |
 | **Max daily loss** | **2%** | **Engine halts until next session** |
 | Min confidence | 35% | No low-conviction entries |
+| Fit to cash | on | Skip a name when 1 share exceeds 25% of equity or buying power. If the watchlist does not fit, scan listed names, preferring ≤ $5. Not OTC, not fractional shares of the big names. |
 
 ## 5. Exit logic
 

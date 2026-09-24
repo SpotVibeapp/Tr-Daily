@@ -4,6 +4,7 @@ import '../../broker/alpaca_broker.dart';
 import '../../broker/paper_broker.dart';
 import '../../core/config.dart';
 import '../../data/models.dart';
+import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import 'home_shell.dart';
@@ -25,6 +26,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _webhookUrl;
   late TextEditingController _telegramBotToken;
   late TextEditingController _telegramChatId;
+  late TextEditingController _paperCash;
   bool _obscureSecret = true;
   bool _saving = false;
 
@@ -38,6 +40,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _webhookUrl = TextEditingController(text: s.notifications.webhookUrl);
     _telegramBotToken = TextEditingController(text: s.notifications.telegramBotToken);
     _telegramChatId = TextEditingController(text: s.notifications.telegramChatId);
+    _paperCash = TextEditingController(
+      text: s.paperStartingCash.toStringAsFixed(0),
+    );
   }
 
   @override
@@ -48,7 +53,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _webhookUrl.dispose();
     _telegramBotToken.dispose();
     _telegramChatId.dispose();
+    _paperCash.dispose();
     super.dispose();
+  }
+
+  void _applyPaperCash() {
+    final parsed = double.tryParse(
+      _paperCash.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+    );
+    if (parsed == null || parsed < 10) return;
+    widget.state.settings.paperStartingCash = parsed;
   }
 
   Future<void> _save({bool silent = false}) async {
@@ -361,6 +375,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ],
                     ),
+                  ],
+                ),
+              ),
+
+              _sectionTitle('FIT TO CASH'),
+              _card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _switchRow(
+                      'Adapt to available cash',
+                      'Skip a name when one share costs more than this account '
+                          'can buy. If nothing on the watchlist fits, scan listed '
+                          'stocks that do — preferring about \$5 and under. Not '
+                          'OTC penny stocks, and not a fraction of AAPL.',
+                      s.fitToBudget,
+                      (v) {
+                        setState(() => s.fitToBudget = v);
+                        if (!v) widget.state.budget.clear();
+                        _save(silent: true);
+                      },
+                    ),
+                    if (s.fitToBudget) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _budgetCaption(st, s),
+                        style: const TextStyle(
+                          color: TrTheme.textMuted,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _sliderRow(
+                        'Prefer stocks at or under',
+                        '\$${s.budgetShareCeiling.toStringAsFixed(0)}',
+                        s.budgetShareCeiling.clamp(1, 20).toDouble(),
+                        1,
+                        20,
+                        (v) {
+                          setState(() => s.budgetShareCeiling = v.roundToDouble());
+                        },
+                        () => _save(silent: true),
+                      ),
+                      const Text(
+                        'Used only when the watchlist itself does not fit. '
+                        'If no listed name is under that price, the engine '
+                        'uses the next names one share can still buy. A '
+                        'large paper account keeps trading AAPL and the rest.',
+                        style: TextStyle(
+                          color: TrTheme.textMuted,
+                          fontSize: 11.5,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -723,10 +793,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           color: TrTheme.textMuted, fontSize: 12.5),
                     ),
                     const SizedBox(height: 8),
+                    TextField(
+                      controller: _paperCash,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Paper starting cash',
+                        helperText:
+                            'Used on reset only. A live Alpaca balance is not changed.',
+                      ),
+                      onEditingComplete: () {
+                        _applyPaperCash();
+                        _save(silent: true);
+                      },
+                    ),
+                    const SizedBox(height: 8),
                     OutlinedButton.icon(
                       onPressed: () => _confirmReset(),
                       icon: const Icon(Icons.restart_alt, size: 16),
                       label: const Text('Reset paper account'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _previewSmallAccount,
+                      icon: const Icon(Icons.savings_outlined, size: 16),
+                      label: const Text('Preview with \$100 paper cash'),
                     ),
                   ],
                 ),
@@ -739,7 +831,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  String _budgetCaption(AppState st, AppSettings s) {
+    final maxPx = maxAffordableSharePrice(st.account, s.risk);
+    final ceiling = s.budgetShareCeiling <= 0 ? 5.0 : s.budgetShareCeiling;
+    if (st.account.equity <= 0 && st.account.buyingPower <= 0) {
+      return 'Connect an account or start paper trading to see the share-price cap.';
+    }
+    return 'Right now one new share can cost up to ${TrTheme.money(maxPx)} '
+        '(${s.risk.maxPositionPct.round()}% of equity, or buying power if that '
+        'is lower). Backup names prefer ${TrTheme.money(ceiling)} and under. '
+        'The \$25,000 paper account can still buy the default watchlist — use '
+        'Preview with \$100 to see this kick in.';
+  }
+
+  Future<void> _previewSmallAccount() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: TrTheme.surface,
+        title: const Text('Preview a \$100 account?'),
+        content: const Text(
+          'Replaces the simulated paper account with \$100 cash so you can see '
+          'which names fit. Live Alpaca funds are not touched. Any open paper '
+          'positions are cleared.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Use \$100'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    widget.state.settings.paperStartingCash = 100;
+    widget.state.settings.fitToBudget = true;
+    _paperCash.text = '100';
+    widget.state.budget.clear();
+    await _save(silent: true);
+    await widget.state.resetPaperAccount();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Paper account is \$100. Names over about \$25 are skipped.',
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmReset() async {
+    _applyPaperCash();
+    await _save(silent: true);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
