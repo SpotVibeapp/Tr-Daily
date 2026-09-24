@@ -10,6 +10,11 @@ analyzer:
     # Flow analysis already guarantees these null checks in context; the
     # redundant `!`s are harmless and blanket-removing them is risky.
     unnecessary_non_null_assertion: ignore
+    # `withOpacity` / `DropdownButtonFormField.value` are deprecated but
+    # still work on every Flutter version we support — the replacements
+    # (withValues/initialValue) don't exist on older stable releases the
+    # user may have locally. Real API removals still surface as errors.
+    deprecated_member_use: ignore
 
 linter:
   rules:
