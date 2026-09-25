@@ -34,6 +34,19 @@ void main() {
       expect(isMarketOpen(open.subtract(const Duration(hours: 6))), isFalse); // 4:30
     });
 
+    test('flatten window is the last 15 minutes before 16:00 ET', () {
+      // Wed 2026-06-10 15:50 ET = 19:50 UTC (EDT). 10 minutes left.
+      final late = DateTime.utc(2026, 6, 10, 19, 50);
+      expect(minutesUntilClose(late), 10);
+      expect(inFlattenWindow(late), isTrue);
+      // 15:00 ET = 19:00 UTC. 60 minutes left.
+      final mid = DateTime.utc(2026, 6, 10, 19, 0);
+      expect(inFlattenWindow(mid), isFalse);
+      // 16:05 ET is after the close, not a flatten window.
+      final after = DateTime.utc(2026, 6, 10, 20, 5);
+      expect(inFlattenWindow(after), isFalse);
+    });
+
     test('closed on weekends', () {
       expect(isMarketOpen(DateTime.utc(2026, 6, 13, 15)), isFalse); // Sat
       expect(isMarketOpen(DateTime.utc(2026, 6, 14, 15)), isFalse); // Sun

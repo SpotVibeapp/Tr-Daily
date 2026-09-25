@@ -5,6 +5,7 @@ import '../broker/alpaca_broker.dart';
 import '../broker/paper_broker.dart';
 import '../core/config.dart';
 import '../core/time.dart';
+import 'day_trade.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../risk/risk_manager.dart';
@@ -77,6 +78,8 @@ class TraderEngine {
 
   String? _lastBudgetSummary;
   DateTime? _lastBudgetEmitAt;
+  final Set<String> _notedOnce = <String>{};
+  String? _quietNotedKey;
 
   final StreamController<EngineEvent> _events =
       StreamController<EngineEvent>.broadcast();
@@ -104,6 +107,41 @@ class TraderEngine {
 
   /// Reconciliation view for the UI: orders not yet confirmed filled.
   List<Order> get pendingOrders => List<Order>.unmodifiable(_pendingOrders.values);
+
+  void _noteOnce(DateTime now, String message, {required bool notedDay}) {
+    if (!notedDay) return;
+    final et = toEastern(now);
+    final key = '${et.year}-${et.month}-${et.day}|$message';
+    if (!_notedOnce.add(key)) return;
+    _emit('info', message);
+  }
+
+  void _noteSkips(
+    DateTime now, {
+    required List<String> quiet,
+    required List<String> oversized,
+  }) {
+    if (quiet.isEmpty && oversized.isEmpty) return;
+    final min = settings.minTargetPct.toStringAsFixed(1);
+    final parts = <String>[];
+    if (quiet.isNotEmpty) {
+      parts.add(
+        'Skipped ${quiet.join(', ')} — target move is under $min% of price',
+      );
+    }
+    if (oversized.isNotEmpty) {
+      parts.add(
+        'Skipped ${oversized.join(', ')} — one share would risk more than '
+        '2.5× the risk-per-trade setting',
+      );
+    }
+    final summary = parts.join('. ');
+    final et = toEastern(now);
+    final key = '${et.year}-${et.month}-${et.day}-${et.hour}-${et.minute ~/ 15}|$summary';
+    if (_quietNotedKey == key) return;
+    _quietNotedKey = key;
+    _emit('info', summary);
+  }
 
   void _noteBudget(String summary, DateTime now) {
     if (summary.isEmpty) return;
@@ -273,27 +311,87 @@ class TraderEngine {
         return;
       }
 
-      // 4) Manage open positions: entry-anchored stops, trailing, scale-out,
-      //    ensemble exits.
-      await _manageExits(signals, positions);
+      // 4) Day trades are closed before the bell so they do not become holds.
+      final flattening =
+          settings.flattenBeforeClose && inFlattenWindow(now);
+      if (flattening && positions.isNotEmpty) {
+        _noteOnce(
+          now,
+          'Closed into the session end — day trades are not held overnight',
+          notedDay: true,
+        );
+        for (final p in positions) {
+          await _close(
+            p,
+            'session ending — day trades are not held overnight',
+          );
+        }
+      }
 
-      // 5) Consider new entries (re-fetch positions after exits).
-      if (sessionOpen || settings.tradeWhileClosed) {
+      // 5) Manage whatever is still open: stops, trailing, scale-out.
+      final livePositions = flattening
+          ? await broker.getPositions()
+          : positions;
+      await _manageExits(signals, livePositions);
+
+      // 6) New entries. Skipped in the flatten window.
+      if (flattening) {
+        _noteOnce(
+          now,
+          'No new entries — last 15 minutes, flattening day trades',
+          notedDay: true,
+        );
+      } else if (sessionOpen || settings.tradeWhileClosed) {
         final openPositions = await broker.getPositions();
         final heldSymbols = openPositions.map((p) => p.symbol).toSet();
         final cap = settings.fitToBudget ? budget.last.maxSharePrice : null;
         final blockShorts = settings.fitToBudget &&
             account.equity > 0 &&
             account.equity < 2000;
-        for (final sig in signals) {
+        final equity = account.equity > 0 ? account.equity : account.cash;
+        final ranked = settings.dayTradeEdge
+            ? rankForDayTrade(signals)
+            : signals;
+        final quiet = <String>[];
+        final oversized = <String>[];
+        for (final sig in ranked) {
           if (sig.stance == Stance.flat) continue;
           if (heldSymbols.contains(sig.symbol)) continue;
           // Whole shares only. A name above the cash cap is skipped here so
           // the log is one summary, not a denial per ticker every minute.
           if (cap != null && (cap <= 0 || sig.price > cap + 1e-6)) continue;
           if (blockShorts && sig.stance == Stance.short) continue;
+          if (settings.dayTradeEdge) {
+            final verdict = risk.entry(
+              account: account,
+              positions: openPositions,
+              price: sig.price,
+              atr: _atrFromSignal(sig),
+              stance: sig.stance,
+              confidence: sig.confidence,
+              day: now,
+            );
+            if (verdict.allowed) {
+              final fit = checkDayTradeVerdict(
+                sig: sig,
+                verdict: verdict,
+                equity: equity,
+                minTargetPct: settings.minTargetPct,
+                riskPerTradePct: settings.risk.riskPerTradePct,
+              );
+              if (!fit.allowed) {
+                if (fit.skip == DayTradeSkip.oversized) {
+                  oversized.add(sig.symbol);
+                } else {
+                  quiet.add(sig.symbol);
+                }
+                continue;
+              }
+            }
+          }
           await _tryEnter(sig, account, openPositions, now);
         }
+        _noteSkips(now, quiet: quiet, oversized: oversized);
       }
       _emit('scan',
           'scan #${signals.length} symbols · ${signals.where((s) => s.stance != Stance.flat).length} setups');

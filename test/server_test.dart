@@ -17,6 +17,9 @@ void main() {
       expect(config.settings.risk.maxDailyLossPct, 2.0);
       expect(config.settings.fitToBudget, isTrue);
       expect(config.settings.budgetShareCeiling, 5);
+      expect(config.settings.dayTradeEdge, isTrue);
+      expect(config.settings.minTargetPct, 1);
+      expect(config.settings.flattenBeforeClose, isTrue);
       expect(config.settings.notifications.hasWebhook, isFalse);
     });
 

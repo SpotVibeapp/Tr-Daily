@@ -76,6 +76,9 @@ void main() {
       expect(back.notifications.enabled, isTrue);
       expect(back.fitToBudget, isTrue);
       expect(back.budgetShareCeiling, 5);
+      expect(back.dayTradeEdge, isTrue);
+      expect(back.minTargetPct, 1.0);
+      expect(back.flattenBeforeClose, isTrue);
     });
 
     test('notifications survive json roundtrip', () {

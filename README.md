@@ -53,6 +53,7 @@ Then in the app:
 3. **Backtest** tab replays history through the same strategy with real execution rules.
 4. **Settings** lets you change the watchlist, intervals, risk, and data provider.
 5. **Small account:** Fit-to-cash is on by default. If one share of the watchlist costs more than 25% of equity, those names are skipped and the engine scans listed stocks that fit, preferring about $5 and under. Preview it with Settings → Preview with $100 paper cash. A $25,000 paper account still trades the default watchlist.
+6. **Day trades, not holds:** Settings → Day trade skips quiet names whose target is under 1% of the share price, and skips a share that would risk more than the risk setting allows. Open positions are sold in the last 15 minutes of the session. This does not guarantee a profit.
 
 `flutter analyze` and `flutter test` must be green — CI enforces this on every push.
 

@@ -119,6 +119,28 @@ bool isEarlyCloseDay(DateTime day) {
   return false;
 }
 
+/// Minutes until the regular-session close (16:00 ET, 13:00 on early-close
+/// days). Null on weekends and holidays. Negative after the close.
+int? minutesUntilClose(DateTime now) {
+  final et = toEastern(now);
+  if (et.weekday == DateTime.saturday || et.weekday == DateTime.sunday) {
+    return null;
+  }
+  final day = DateTime(et.year, et.month, et.day);
+  if (isMarketHoliday(day)) return null;
+  final close = isEarlyCloseDay(day) ? 13 * 60 : 16 * 60;
+  final minutes = et.hour * 60 + et.minute;
+  return close - minutes;
+}
+
+/// Last [minutesBefore] of the regular session. Used to flatten day trades
+/// while the market is still open, so they are not held overnight.
+bool inFlattenWindow(DateTime now, {int minutesBefore = 15}) {
+  final left = minutesUntilClose(now);
+  if (left == null) return false;
+  return left > 0 && left <= minutesBefore;
+}
+
 /// Regular session check for [now] (any tz). True during 09:30–16:00 ET on a
 /// trading day (13:00 close on early-close days).
 bool isMarketOpen(DateTime now) {

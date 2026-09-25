@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
+import '../../engine/day_trade.dart';
 import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
@@ -64,6 +65,8 @@ class SignalsScreen extends StatelessWidget {
                   _SignalCard(
                     signal: sig,
                     overBudget: _overBudget(state, sig),
+                    tooQuiet: _tooQuiet(state, sig),
+                    minTargetPct: state.settings.minTargetPct,
                     budgetPick: state.budget.last.sleeve.contains(sig.symbol),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
@@ -90,6 +93,13 @@ bool _overBudget(AppState state, SignalScore sig) {
   if (!state.settings.fitToBudget) return false;
   final maxPx = maxAffordableSharePrice(state.account, state.settings.risk);
   return maxPx > 0 && sig.price > maxPx + 1e-6;
+}
+
+bool _tooQuiet(AppState state, SignalScore sig) {
+  if (!state.settings.dayTradeEdge || sig.stance == Stance.flat) return false;
+  final pct = targetPctOfPrice(sig);
+  if (pct == null) return false;
+  return pct + 1e-9 < state.settings.minTargetPct;
 }
 
 class _EmptyState extends StatelessWidget {
@@ -132,12 +142,16 @@ class _SignalCard extends StatelessWidget {
     required this.signal,
     required this.onTap,
     this.overBudget = false,
+    this.tooQuiet = false,
+    this.minTargetPct = 1,
     this.budgetPick = false,
   });
 
   final SignalScore signal;
   final VoidCallback onTap;
   final bool overBudget;
+  final bool tooQuiet;
+  final double minTargetPct;
   final bool budgetPick;
 
   @override
@@ -191,6 +205,14 @@ class _SignalCard extends StatelessWidget {
               const Text(
                 'Over budget — one share does not fit, so this name is skipped',
                 style: TextStyle(color: TrTheme.warn, fontSize: 11),
+              ),
+            ] else if (tooQuiet) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Too quiet for a day trade — target '
+                '${(targetPctOfPrice(signal) ?? 0).toStringAsFixed(2)}% of price, '
+                'need ${minTargetPct.toStringAsFixed(1)}%',
+                style: const TextStyle(color: TrTheme.warn, fontSize: 11),
               ),
             ] else if (budgetPick) ...[
               const SizedBox(height: 4),

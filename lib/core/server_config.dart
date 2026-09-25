@@ -45,6 +45,11 @@ class ServerConfig {
     final fitToBudget = (env['FIT_TO_BUDGET'] ?? 'true').toLowerCase() != 'false';
     final budgetCeiling =
         double.tryParse(env['BUDGET_SHARE_CEILING'] ?? '5') ?? 5;
+    final dayTradeEdge =
+        (env['DAY_TRADE_EDGE'] ?? 'true').toLowerCase() != 'false';
+    final minTargetPct = double.tryParse(env['MIN_TARGET_PCT'] ?? '1.0') ?? 1.0;
+    final flattenBeforeClose =
+        (env['FLATTEN_BEFORE_CLOSE'] ?? 'true').toLowerCase() != 'false';
 
     final dpStr = (env['DATA_PROVIDER'] ?? 'auto').toLowerCase();
     final dataProvider = switch (dpStr) {
@@ -71,6 +76,9 @@ class ServerConfig {
       allowShort: allowShort,
       fitToBudget: fitToBudget,
       budgetShareCeiling: budgetCeiling,
+      dayTradeEdge: dayTradeEdge,
+      minTargetPct: minTargetPct,
+      flattenBeforeClose: flattenBeforeClose,
       risk: RiskConfig(
         riskPerTradePct: riskPerTrade,
         maxDailyLossPct: maxDailyLoss,

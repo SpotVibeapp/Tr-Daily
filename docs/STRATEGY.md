@@ -61,6 +61,7 @@ confidence = 0.45·trendQuality + 0.30·|signal avg| + 0.15·ADX gate + ML certa
 | **Max daily loss** | **2%** | **Engine halts until next session** |
 | Min confidence | 35% | No low-conviction entries |
 | Fit to cash | on | Skip a name when 1 share exceeds 25% of equity or buying power. If the watchlist does not fit, scan listed names, preferring ≤ $5. Not OTC, not fractional shares of the big names. |
+| Day-trade edge | on, 1% target | Skip a setup whose target is under 1% of the share price, or whose forced 1-share size risks more than 2.5× the risk-per-trade setting. Flatten in the last 15 minutes so a day trade is not held overnight. Not a profit guarantee. |
 
 ## 5. Exit logic
 

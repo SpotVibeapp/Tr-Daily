@@ -39,6 +39,9 @@ class AppSettings {
     this.paperStartingCash = 25000,
     this.fitToBudget = true,
     this.budgetShareCeiling = 5,
+    this.dayTradeEdge = true,
+    this.minTargetPct = 1.0,
+    this.flattenBeforeClose = true,
   })  : keys = keys ?? const TradingKeys(keyId: '', secretKey: ''),
         watchlist = watchlist ?? List<String>.from(defaultWatchlist),
         risk = risk ?? const RiskConfig(),
@@ -78,6 +81,16 @@ class AppSettings {
   /// Never overrides the cash cap from [RiskConfig.maxPositionPct].
   double budgetShareCeiling;
 
+  /// Skip setups whose target is too small a percent of price, or whose
+  /// forced share size blows past the risk-per-trade setting.
+  bool dayTradeEdge;
+
+  /// Minimum target distance as a percent of the share price.
+  double minTargetPct;
+
+  /// Sell open positions in the last 15 minutes of the session.
+  bool flattenBeforeClose;
+
   bool get liveTrading => brokerMode == BrokerMode.live && keys.isConfigured;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -98,6 +111,9 @@ class AppSettings {
         'paperStartingCash': paperStartingCash,
         'fitToBudget': fitToBudget,
         'budgetShareCeiling': budgetShareCeiling,
+        'dayTradeEdge': dayTradeEdge,
+        'minTargetPct': minTargetPct,
+        'flattenBeforeClose': flattenBeforeClose,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -151,6 +167,11 @@ class AppSettings {
       fitToBudget: json['fitToBudget'] as bool? ?? defaults.fitToBudget,
       budgetShareCeiling: (json['budgetShareCeiling'] as num?)?.toDouble() ??
           defaults.budgetShareCeiling,
+      dayTradeEdge: json['dayTradeEdge'] as bool? ?? defaults.dayTradeEdge,
+      minTargetPct: (json['minTargetPct'] as num?)?.toDouble() ??
+          defaults.minTargetPct,
+      flattenBeforeClose:
+          json['flattenBeforeClose'] as bool? ?? defaults.flattenBeforeClose,
     );
   }
 }

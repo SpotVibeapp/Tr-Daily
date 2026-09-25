@@ -435,6 +435,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
+              _sectionTitle('DAY TRADE'),
+              _card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _switchRow(
+                      'Only take trades with room to move',
+                      'Skip a setup when the target is too small a percent of '
+                          'the share price, or when one share would risk more '
+                          'than the risk setting allows. A quiet name is not '
+                          'forced just because it fits the cash cap. This does '
+                          'not guarantee a profit.',
+                      s.dayTradeEdge,
+                      (v) {
+                        setState(() => s.dayTradeEdge = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    if (s.dayTradeEdge)
+                      _sliderRow(
+                        'Minimum target',
+                        '${s.minTargetPct.toStringAsFixed(1)}% of the share price',
+                        s.minTargetPct.clamp(0.4, 3.0).toDouble(),
+                        0.4,
+                        3.0,
+                        (v) {
+                          setState(() => s.minTargetPct =
+                              (v * 10).roundToDouble() / 10);
+                        },
+                        () => _save(silent: true),
+                      ),
+                    _switchRow(
+                      'Flatten before the close',
+                      'Sell open positions in the last 15 minutes of the '
+                          'session so a day trade does not become an overnight '
+                          'hold. The app or the cloud server has to be running '
+                          'then.',
+                      s.flattenBeforeClose,
+                      (v) {
+                        setState(() => s.flattenBeforeClose = v);
+                        _save(silent: true);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
               _sectionTitle('ENGINE'),
               _card(
                 child: Column(
