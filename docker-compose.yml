@@ -20,9 +20,12 @@ services:
       # Engine scan cadence in seconds
       - SCAN_INTERVAL_SECONDS=60
       # Risk management parameters
-      - RISK_PER_TRADE_PCT=1.0
+      - RISK_PER_TRADE_PCT=0.5
       - MAX_DAILY_LOSS_PCT=2.0
-      - MAX_OPEN_POSITIONS=5
+      - MAX_OPEN_POSITIONS=1
+      # Skip new trades under $1 a share or under ~$1M traded per session
+      - MIN_SHARE_PRICE=1.0
+      - MIN_DOLLAR_VOLUME=1000000
       # Free phone push notifications (Discord webhook or Telegram bot)
       - WEBHOOK_URL=${WEBHOOK_URL:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}

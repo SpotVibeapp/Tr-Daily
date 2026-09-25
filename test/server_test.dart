@@ -13,7 +13,10 @@ void main() {
       expect(config.host, '0.0.0.0');
       expect(config.settings.watchlist, isNotEmpty);
       expect(config.settings.scanIntervalSeconds, 60);
-      expect(config.settings.risk.riskPerTradePct, 1.0);
+      expect(config.settings.risk.riskPerTradePct, 0.5);
+      expect(config.settings.risk.maxOpenPositions, 1);
+      expect(config.settings.minSharePrice, 1.0);
+      expect(config.settings.minDollarVolume, 1000000);
       expect(config.settings.risk.maxDailyLossPct, 2.0);
       expect(config.settings.fitToBudget, isTrue);
       expect(config.settings.budgetShareCeiling, 5);

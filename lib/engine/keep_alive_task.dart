@@ -6,6 +6,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../state/app_state.dart';
 import '../storage/persistent_store_io.dart';
+import '../storage/secure_vault.dart';
 
 /// Entry point for the Android foreground service. Must stay a top-level
 /// function so the process can resume it after the UI isolate is gone.
@@ -32,7 +33,7 @@ class TradingKeepAliveHandler extends TaskHandler {
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     DartPluginRegistrant.ensureInitialized();
     WidgetsFlutterBinding.ensureInitialized();
-    final state = AppState(store: await FileStore.open());
+    final state = AppState(store: await FileStore.open(), vault: SecureVault());
     _state = state;
     await state.init(launchEngine: false);
     if (!state.settings.engineArmed || !state.settings.keepRunningWhenClosed) {

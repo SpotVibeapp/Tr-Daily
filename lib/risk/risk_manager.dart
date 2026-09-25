@@ -3,8 +3,8 @@ import '../data/models.dart';
 /// Risk parameters — conservative defaults; everything is configurable.
 class RiskConfig {
   const RiskConfig({
-    this.riskPerTradePct = 0.75,
-    this.maxOpenPositions = 3,
+    this.riskPerTradePct = 0.5,
+    this.maxOpenPositions = 1,
     this.maxExposurePct = 60,
     this.maxDailyLossPct = 2.0,
     this.dailyProfitGoalPct = 30.0,
@@ -23,9 +23,12 @@ class RiskConfig {
     this.scaleOutFraction = 0.5,
   });
 
-  /// % of equity risked per trade (distance to stop).
+  /// % of equity risked per trade (distance to stop). 0.5% by default: a
+  /// small first live account should find out how real fills compare with
+  /// paper before it risks more.
   final double riskPerTradePct;
 
+  /// One position at a time by default, for the same reason.
   final int maxOpenPositions;
 
   /// Max total exposure as % of equity.

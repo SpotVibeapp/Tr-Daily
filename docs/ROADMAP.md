@@ -20,8 +20,8 @@ next begins.
 
 - [x] Alpaca wire-contract tests (fake HTTP client: payloads, brackets,
       extended-hours, error mapping, fill reconciliation endpoints)
-- [x] Day-trade counter & PDT-rule warnings surfaced in UI (broker-reported
-      live, estimated from paper fills; 3→warning, 4→restriction banner)
+- [x] ~~Day-trade counter & PDT-rule warnings~~ (removed: FINRA retired the
+      PDT rule on June 4, 2026)
 - [x] Trailing stops (ATR-based, profit-activated, ratchet-only) +
       partial take-profits (scale-out at ATR milestone)
 - [x] Entry-anchored stops (stops no longer re-derive from live price each

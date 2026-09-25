@@ -160,6 +160,40 @@ jobs:
           print(path.read_text())
           PY
 
+      # flutter_secure_storage (broker keys in the Android Keystore) needs
+      # Android 6.0 / API 23. Keep the template's value when it is higher.
+      # Backups are off so a settings file is never restored onto another
+      # phone whose Keystore cannot decrypt the saved keys.
+      - name: Raise minSdk for the secure key store
+        run: |
+          python3 << 'PY'
+          import re
+          from pathlib import Path
+          gradle_files = list(Path("android/app").glob("build.gradle*"))
+          if len(gradle_files) != 1:
+              raise SystemExit(f"expected one app gradle file, found {gradle_files}")
+          path = gradle_files[0]
+          text = path.read_text()
+          if path.suffix == ".kts":
+              pattern = r"minSdk\s*=\s*flutter\.minSdkVersion"
+              repl = "minSdk = maxOf(flutter.minSdkVersion, 23)"
+          else:
+              pattern = r"minSdk(?:Version)?\s*=?\s*flutter\.minSdkVersion"
+              repl = "minSdkVersion Math.max(flutter.minSdkVersion, 23)"
+          text, n = re.subn(pattern, repl, text, count=1)
+          if n == 0 and "minSdk" in text and "23" not in text:
+              raise SystemExit(f"minSdk line not recognised in {path}")
+          path.write_text(text)
+          print(next(l for l in text.splitlines() if "minSdk" in l).strip())
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          m = manifest.read_text()
+          if "android:allowBackup" not in m:
+              m = re.sub(r"<application\b", '<application android:allowBackup="false"', m, count=1)
+              manifest.write_text(m)
+          print("allowBackup:", 'android:allowBackup="false"' in manifest.read_text())
+          PY
+
       - name: Ensure required Android SDK components
         run: |
           set -uo pipefail

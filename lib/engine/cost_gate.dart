@@ -68,6 +68,10 @@ OrderRequest? sessionOrder({
 }) {
   if (qty <= 0) return null;
   if (regularSession) {
+    // With a broker-side stop attached, keep the stop and target working
+    // past today's close (GTC). A day order's legs expire at 16:00, so a
+    // position left open by a killed app would sit overnight with no stop.
+    final hasLegs = takeProfit != null || stopLoss != null;
     return OrderRequest(
       symbol: symbol,
       side: side,
@@ -75,6 +79,7 @@ OrderRequest? sessionOrder({
       qty: qty,
       takeProfit: takeProfit,
       stopLoss: stopLoss,
+      timeInForce: hasLegs ? TimeInForce.gtc : TimeInForce.day,
       extendedHours: false,
     );
   }

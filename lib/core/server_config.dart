@@ -37,9 +37,14 @@ class ServerConfig {
         : List<String>.from(AppSettings.defaultWatchlist);
 
     final scanInterval = int.tryParse(env['SCAN_INTERVAL_SECONDS'] ?? '60') ?? 60;
-    final riskPerTrade = double.tryParse(env['RISK_PER_TRADE_PCT'] ?? '1.0') ?? 1.0;
+    // Same starting defaults as the app: 0.5% risk, one position at a time.
+    final riskPerTrade = double.tryParse(env['RISK_PER_TRADE_PCT'] ?? '0.5') ?? 0.5;
     final maxDailyLoss = double.tryParse(env['MAX_DAILY_LOSS_PCT'] ?? '2.0') ?? 2.0;
-    final maxPositions = int.tryParse(env['MAX_OPEN_POSITIONS'] ?? '5') ?? 5;
+    final maxPositions = int.tryParse(env['MAX_OPEN_POSITIONS'] ?? '1') ?? 1;
+    final minSharePrice =
+        double.tryParse(env['MIN_SHARE_PRICE'] ?? '1.0') ?? 1.0;
+    final minDollarVolume =
+        double.tryParse(env['MIN_DOLLAR_VOLUME'] ?? '1000000') ?? 1000000;
     final extendedHours = (env['EXTENDED_HOURS'] ?? 'false').toLowerCase() == 'true';
     final allowShort = (env['ALLOW_SHORT'] ?? 'true').toLowerCase() != 'false';
     final fitToBudget = (env['FIT_TO_BUDGET'] ?? 'true').toLowerCase() != 'false';
@@ -91,6 +96,8 @@ class ServerConfig {
       allowConvictionRisk: allowConvictionRisk,
       allowOvernightHolds: allowOvernightHolds,
       scanListedMarket: scanListedMarket,
+      minSharePrice: minSharePrice,
+      minDollarVolume: minDollarVolume,
       risk: RiskConfig(
         riskPerTradePct: riskPerTrade,
         maxDailyLossPct: maxDailyLoss,

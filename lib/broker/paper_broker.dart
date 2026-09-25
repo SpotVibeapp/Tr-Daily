@@ -1,4 +1,6 @@
 import '../data/models.dart';
+import '../engine/cost_gate.dart';
+import '../engine/fill_model.dart';
 import 'alpaca_broker.dart';
 
 /// Simple in-memory trade record kept by the paper broker (and used as the
@@ -45,8 +47,9 @@ class PaperFill {
       );
 }
 
-/// Local simulated broker: market orders fill instantly at [lastPrice] plus a
-/// configurable slippage; tracks cash, average cost and realized PnL.
+/// Local simulated broker: market orders fill instantly at the ask (buy) or
+/// bid (sell) when a quote is known, otherwise at [lastPrice] ± the larger of
+/// [slippagePct] and half a tick. Tracks cash, average cost and realized PnL.
 ///
 /// Persisted entirely through [toJson]/[fromJson] by AppState — no platform
 /// channels, so it's fully unit-testable.
@@ -77,6 +80,20 @@ class PaperBroker implements Broker {
 
   /// Latest known price per symbol (fed by the engine each scan cycle).
   final Map<String, double> lastPrice = <String, double>{};
+
+  /// Latest bid/ask per symbol, when the data feed has one. A market buy
+  /// pays the ask and a sell gets the bid, like a real order.
+  final Map<String, BidAsk> lastQuote = <String, BidAsk>{};
+
+  /// Replace the known quotes. Names without a fresh quote fall back to the
+  /// last price plus a half-tick cost (see [simulatedFill]).
+  void setQuotes(Map<String, BidAsk> quotes) {
+    lastQuote
+      ..clear()
+      ..addAll(<String, BidAsk>{
+        for (final e in quotes.entries) e.key.toUpperCase(): e.value,
+      });
+  }
 
   double _dayStartEquity = 0;
   int _orderSeq = 0;
@@ -223,8 +240,26 @@ class PaperBroker implements Broker {
       }
     }
 
-    final slip = px * slippagePct / 100;
-    final fillPx = isBuy ? px + slip : px - slip;
+    // Limit orders fill at their limit or better; market orders cross the
+    // spread (quote-aware, never cheaper than half a tick).
+    final double fillPx;
+    if (request.type == OrderType.limit && request.limitPrice != null) {
+      final lp = request.limitPrice!;
+      final market = simulatedFill(
+        last: px,
+        isBuy: isBuy,
+        slippagePct: slippagePct,
+        quote: lastQuote[sym],
+      );
+      fillPx = isBuy ? (market < lp ? market : lp) : (market > lp ? market : lp);
+    } else {
+      fillPx = simulatedFill(
+        last: px,
+        isBuy: isBuy,
+        slippagePct: slippagePct,
+        quote: lastQuote[sym],
+      );
+    }
     final notional = fillPx * qty;
 
     final existing = _positions.where((p) => p.symbol == sym).firstOrNull;

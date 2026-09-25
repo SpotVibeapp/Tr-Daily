@@ -73,8 +73,9 @@ Oracle Cloud Infrastructure (OCI) offers an **Always Free** tier that includes:
    ALPACA_SECRET_KEY=your_alpaca_secret_key
    WATCHLIST=AAPL,NVDA,TSLA,MSFT,AMZN
    SCAN_INTERVAL_SECONDS=60
-   RISK_PER_TRADE_PCT=1.0
+   RISK_PER_TRADE_PCT=0.5
    MAX_DAILY_LOSS_PCT=2.0
+   MAX_OPEN_POSITIONS=1
    WEBHOOK_URL=https://discord.com/api/webhooks/your_webhook_id/token
    EOF
    ```

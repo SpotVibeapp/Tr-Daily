@@ -21,6 +21,8 @@ dependencies:
   path_provider: ^2.1.3
   # Android foreground service so a started scan survives leaving the app.
   flutter_foreground_task: 11.0.3
+  # Broker API keys go in the Android Keystore, not the settings file.
+  flutter_secure_storage: ^11.2.0
 
 dev_dependencies:
   flutter_test:

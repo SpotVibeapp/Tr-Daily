@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tr_daily/broker/paper_broker.dart';
 import 'package:tr_daily/data/models.dart';
+import 'package:tr_daily/engine/cost_gate.dart';
 
 void main() {
   group('PaperBroker', () {
@@ -79,7 +80,8 @@ void main() {
       ));
       var positions = await pb.getPositions();
       expect(positions.first.short, isTrue);
-      expect(positions.first.unrealizedPnl, closeTo(0, 0.01));
+      // Even at 0% slippage a sell pays half a 1¢ tick: 5 × $0.005.
+      expect(positions.first.unrealizedPnl, closeTo(-0.025, 0.001));
 
       pb.setPrice('TSLA', 180);
       positions = await pb.getPositions();
@@ -94,6 +96,78 @@ void main() {
       expect(await pb.getPositions(), isEmpty);
       final acct = await pb.getAccount();
       expect(acct.equity, greaterThan(10000));
+    });
+
+    test('a cheap stock pays at least half a tick each way', () async {
+      final pb = PaperBroker(startingCash: 100);
+      pb.setPrice('PLUG', 4);
+      final buy = await pb.submitOrder(const OrderRequest(
+        symbol: 'PLUG',
+        side: OrderSide.buy,
+        type: OrderType.market,
+        qty: 6,
+      ));
+      // 0.02% of $4 is 0.08¢, less than half of a 1¢ tick.
+      expect(buy.filledAvgPrice, closeTo(4.005, 1e-9));
+      final sell = await pb.submitOrder(const OrderRequest(
+        symbol: 'PLUG',
+        side: OrderSide.sell,
+        type: OrderType.market,
+        qty: 6,
+      ));
+      expect(sell.filledAvgPrice, closeTo(3.995, 1e-9));
+      // A flat round trip loses one tick per share: 6 × $0.01.
+      expect((await pb.getAccount()).equity, closeTo(100 - 0.06, 1e-9));
+    });
+
+    test('a market order pays the ask and gets the bid when quoted', () async {
+      final pb = PaperBroker(startingCash: 1000);
+      pb.setPrice('SOFI', 10);
+      pb.setQuotes(<String, BidAsk>{
+        'sofi': const BidAsk(bid: 9.97, ask: 10.03),
+      });
+      final buy = await pb.submitOrder(const OrderRequest(
+        symbol: 'SOFI',
+        side: OrderSide.buy,
+        type: OrderType.market,
+        qty: 10,
+      ));
+      expect(buy.filledAvgPrice, closeTo(10.03, 1e-9));
+      final sell = await pb.submitOrder(const OrderRequest(
+        symbol: 'SOFI',
+        side: OrderSide.sell,
+        type: OrderType.market,
+        qty: 10,
+      ));
+      expect(sell.filledAvgPrice, closeTo(9.97, 1e-9));
+    });
+
+    test('a stale quote far from the last price is ignored', () async {
+      final pb = PaperBroker(startingCash: 1000);
+      pb.setPrice('SOFI', 10);
+      pb.setQuotes(<String, BidAsk>{
+        'SOFI': const BidAsk(bid: 11.00, ask: 11.02),
+      });
+      final buy = await pb.submitOrder(const OrderRequest(
+        symbol: 'SOFI',
+        side: OrderSide.buy,
+        type: OrderType.market,
+        qty: 1,
+      ));
+      expect(buy.filledAvgPrice, closeTo(10.005, 1e-9));
+    });
+
+    test('a marketable limit never fills past its limit', () async {
+      final pb = PaperBroker(startingCash: 1000);
+      pb.setPrice('SOFI', 10);
+      final buy = await pb.submitOrder(const OrderRequest(
+        symbol: 'SOFI',
+        side: OrderSide.buy,
+        type: OrderType.limit,
+        qty: 1,
+        limitPrice: 10.002,
+      ));
+      expect(buy.filledAvgPrice, closeTo(10.002, 1e-9));
     });
 
     test('refuses to fill without a known price', () async {

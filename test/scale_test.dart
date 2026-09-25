@@ -28,43 +28,35 @@ void main() {
     final plan = scalePlan(
       account: acct(equity: 8000, lastEquity: 1500),
       settings: AppSettings(),
-      dayTradeCount: 0,
     );
     expect(plan.dayStartEquity, 1500);
     expect(plan.band, AccountBand.micro);
     expect(plan.allowShort, isFalse);
-    expect(plan.pdtApplies, isTrue);
     expect(plan.keepLowerPriced, isFalse);
   });
 
-  test('full day trading unlocks at 25000 and still keeps cheap names', () {
+  test('the top band still keeps cheap names', () {
     final plan = scalePlan(
       account: acct(equity: 26000, lastEquity: 25000),
       settings: AppSettings(),
-      dayTradeCount: 6,
     );
     expect(plan.fullDayTrade, isTrue);
-    expect(plan.pdtApplies, isFalse);
-    expect(plan.pdtBlocked, isFalse);
     expect(plan.keepLowerPriced, isTrue);
     expect(plan.opportunityCeiling, greaterThan(plan.cheapCeiling));
-    expect(plan.summary, contains('Full day trading'));
     expect(plan.summary, contains('does not guarantee'));
   });
 
-  test('a fourth day trade is skipped only under 25000', () {
-    final small = scalePlan(
-      account: acct(equity: 10000, lastEquity: 10000),
-      settings: AppSettings(),
-      dayTradeCount: 4,
-    );
-    expect(small.pdtBlocked, isTrue);
-    final room = scalePlan(
-      account: acct(equity: 10000, lastEquity: 10000),
-      settings: AppSettings(),
-      dayTradeCount: 3,
-    );
-    expect(room.pdtBlocked, isFalse);
+  test('no balance caps day trades any more (PDT rule retired 2026-06-04)',
+      () {
+    for (final equity in <double>[100, 1999, 10000, 24999]) {
+      final plan = scalePlan(
+        account: acct(equity: equity, lastEquity: equity),
+        settings: AppSettings(),
+      );
+      expect(plan.summary, contains('not capped by count'));
+      expect(plan.summary, isNot(contains('25,000')));
+      expect(plan.summary, isNot(contains('4th day trade')));
+    }
   });
 
   test('conviction raises risk only for a strong target', () {

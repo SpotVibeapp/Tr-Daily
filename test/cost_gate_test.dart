@@ -75,6 +75,22 @@ void main() {
       expect(order.extendedHours, isFalse);
       expect(order.limitPrice, isNull);
       expect(order.takeProfit, 110);
+      // The stop and target keep working after today's close.
+      expect(order.timeInForce, TimeInForce.gtc);
+    });
+
+    test('a regular-session order without a stop stays a day order', () {
+      final order = sessionOrder(
+        symbol: 'AAPL',
+        side: OrderSide.sell,
+        qty: 2,
+        regularSession: true,
+        quote: null,
+        allowOutside: false,
+        extendedHours: false,
+      );
+      expect(order!.type, OrderType.market);
+      expect(order.timeInForce, TimeInForce.day);
     });
 
     test('outside the regular session a buy is a limit at the ask', () {

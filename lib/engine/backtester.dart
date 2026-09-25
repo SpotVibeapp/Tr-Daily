@@ -7,6 +7,7 @@ import '../data/models.dart';
 import '../risk/risk_manager.dart';
 import '../strategy/ensemble.dart';
 import '../strategy/signals.dart';
+import 'fill_model.dart';
 
 class BacktestConfig {
   const BacktestConfig({
@@ -117,6 +118,15 @@ class Backtester {
       limit: bars,
       end: end,
     );
+    return runOn(symbol: symbol, history: history);
+  }
+
+  /// Backtest already-loaded [history]. Lets two configs (for example with
+  /// and without the ML layer) be compared on exactly the same bars.
+  BacktestResult runOn({
+    required String symbol,
+    required List<Candle> history,
+  }) {
     if (history.length < config.warmupBars + 20) {
       throw StateError(
           'need ≥${config.warmupBars + 20} bars, got ${history.length}');
@@ -153,7 +163,9 @@ class Backtester {
       // ---- 1) Fill pending orders at this bar's open ----
       if (open != null || pendingEntry != Stance.flat) {
         if (pendingExit && open != null) {
-          final exitPrice = _fillPrice(bar.open, short: open!.side == Stance.short, slippage: true);
+          // Closing a long is a sell; closing a short is a buy.
+          final exitPrice =
+              _fillPrice(bar.open, isBuy: open!.side == Stance.short);
           final closed = _exitAt(open!, bar.time, exitPrice, 'signal exit');
           trades.add(closed);
           equity += closed.grossPnl;
@@ -162,7 +174,7 @@ class Backtester {
         }
         if (pendingEntry != Stance.flat && open == null && pendingQty != null) {
           final fillPx =
-              _fillPrice(bar.open, short: pendingEntry == Stance.short, slippage: true);
+              _fillPrice(bar.open, isBuy: pendingEntry == Stance.long);
           final qty = pendingQty!;
           final fees = config.feePerShare * qty;
           open = StrategyTrade(
@@ -192,8 +204,10 @@ class Backtester {
             : bar.low <= target;
 
         if (hitStop && hitTarget) {
-          // Same-bar both-hit: assume stop first (conservative).
-          final closed = _exitAt(open!, bar.time, stop, 'stop loss');
+          // Same-bar both-hit: assume stop first (conservative). A stop
+          // becomes a market order, so it pays the spread too.
+          final closed = _exitAt(open!, bar.time,
+              _fillPrice(stop, isBuy: open!.side == Stance.short), 'stop loss');
           trades.add(closed);
           equity += closed.grossPnl;
           open = null;
@@ -202,7 +216,8 @@ class Backtester {
           final px = open!.side == Stance.long
               ? (bar.open < stop ? bar.open : stop)
               : (bar.open > stop ? bar.open : stop);
-          final closed = _exitAt(open!, bar.time, px, 'stop loss');
+          final closed = _exitAt(open!, bar.time,
+              _fillPrice(px, isBuy: open!.side == Stance.short), 'stop loss');
           trades.add(closed);
           equity += closed.grossPnl;
           open = null;
@@ -301,9 +316,7 @@ class Backtester {
     // Force-close at the end for honest accounting.
     if (open != null) {
       final lastBar = history.last;
-      final px = open!.side == Stance.short
-          ? (lastBar.close + lastBar.close * config.slippagePct / 100)
-          : (lastBar.close - lastBar.close * config.slippagePct / 100);
+      final px = _fillPrice(lastBar.close, isBuy: open!.side == Stance.short);
       final closed = _exitAt(open!, lastBar.time, px, 'end of test');
       trades.add(closed);
       equity += closed.grossPnl;
@@ -345,10 +358,13 @@ class Backtester {
     return (s, tgt);
   }
 
-  double _fillPrice(double open, {required bool short, required bool slippage}) {
-    if (!slippage) return open;
-    final slip = open * config.slippagePct / 100;
-    return short ? open - slip : open + slip;
+  /// A market fill at [price]: a buy pays more, a sell gets less. The cost
+  /// is the larger of [BacktestConfig.slippagePct] and half a tick, the same
+  /// model the paper broker uses. A take-profit is a resting limit and fills
+  /// at its price, so it does not come through here.
+  double _fillPrice(double price, {required bool isBuy}) {
+    final cost = sideCost(price, config.slippagePct);
+    return isBuy ? price + cost : price - cost;
   }
 
   /// Build the completed copy of an open trade at exit. Callers add it to

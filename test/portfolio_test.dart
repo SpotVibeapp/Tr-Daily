@@ -167,5 +167,33 @@ void main() {
       expect(msftTrade.exitPrice, 290);
       expect(msftTrade.holdDuration, const Duration(minutes: 45));
     });
+
+    test('newest-first input (how the trade log is kept) pairs the same', () {
+      final buy = PaperFill(
+        id: 'b',
+        symbol: 'PLUG',
+        side: OrderSide.buy,
+        qty: 6,
+        price: 4.00,
+        time: DateTime(2026, 9, 20, 10, 0),
+        realizedPnl: 0,
+      );
+      final sell = PaperFill(
+        id: 's',
+        symbol: 'PLUG',
+        side: OrderSide.sell,
+        qty: 6,
+        price: 4.10,
+        time: DateTime(2026, 9, 20, 10, 20),
+        realizedPnl: 0.60,
+      );
+      final perf = PortfolioPerformance.fromFills(<PaperFill>[sell, buy]);
+      final t = perf.trades.single;
+      expect(t.side, OrderSide.buy);
+      expect(t.entryPrice, 4.00);
+      expect(t.exitPrice, 4.10);
+      expect(t.holdDuration, const Duration(minutes: 20));
+      expect(t.realizedPnl, closeTo(0.60, 1e-9));
+    });
   });
 }

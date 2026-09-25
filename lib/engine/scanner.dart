@@ -4,6 +4,7 @@ import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../strategy/ensemble.dart';
 import '../strategy/signals.dart';
+import 'liquidity.dart';
 
 class ScanOutcome {
   const ScanOutcome({
@@ -11,14 +12,55 @@ class ScanOutcome {
     required this.errors,
     required this.at,
     required this.dataSourceId,
+    this.thin = const <String, int>{},
   });
 
   final List<SignalScore> signals;
+
+  /// Real data failures (HTTP, parse, timeout). Worth a warning.
   final Map<String, String> errors;
+
+  /// symbol -> bars returned, for names with less than
+  /// [MarketScanner.minBars] of history. These are thinly traded, not broken.
+  /// The listed-market walk hits several every pass.
+  final Map<String, int> thin;
   final DateTime at;
   final String dataSourceId;
 
   bool get hasErrors => errors.isNotEmpty;
+
+  /// What belongs in the on-screen warning: real failures, plus thin names the
+  /// user picked or holds ([mine]). Null when there is nothing to warn about.
+  /// Thin names from the market walk or the budget list are left out. They are
+  /// skipped, and [thinSkipped] reports them.
+  String? warningFor(Iterable<String> mine) {
+    final wanted = <String>{for (final s in mine) s.trim().toUpperCase()};
+    final parts = <String>[
+      for (final e in errors.entries) '${e.key}: ${e.value}',
+      for (final e in thin.entries)
+        if (wanted.contains(e.key))
+          '${e.key}: only ${e.value} bars so far, '
+              'needs ${MarketScanner.minBars} to judge',
+    ];
+    return parts.isEmpty ? null : parts.join('; ');
+  }
+
+  /// Thin names that were skipped quietly (not in [mine]).
+  List<String> thinSkipped(Iterable<String> mine) {
+    final wanted = <String>{for (final s in mine) s.trim().toUpperCase()};
+    return <String>[
+      for (final symbol in thin.keys)
+        if (!wanted.contains(symbol)) symbol,
+    ];
+  }
+}
+
+/// Short log text for thin names skipped on one pass. Empty when none.
+String thinSkippedNote(List<String> skipped) {
+  if (skipped.isEmpty) return '';
+  final n = skipped.length;
+  return '$n thinly traded name${n == 1 ? '' : 's'} skipped '
+      '(under ${MarketScanner.minBars} bars): ${skipped.join(', ')}';
 }
 
 /// Scans a watchlist and produces explainable ensemble signals. Also owns the
@@ -30,6 +72,9 @@ class MarketScanner {
     required this.ensemble,
     this.barsPerSymbol = 220,
   });
+
+  /// Fewer bars than this and the indicators are not meaningful.
+  static const int minBars = 60;
 
   MarketDataSource source;
   final TrendEstimator estimator;
@@ -56,6 +101,7 @@ class MarketScanner {
     final at = now ?? DateTime.now();
     final signals = <SignalScore>[];
     final errors = <String, String>{};
+    final thin = <String, int>{};
     final unique = <String>[];
     final seen = <String>{};
     for (final raw in symbols) {
@@ -81,6 +127,8 @@ class MarketScanner {
         if (signal != null) signals.add(signal);
         final error = row.error;
         if (error != null) errors[row.symbol] = error;
+        final thinBars = row.thinBars;
+        if (thinBars != null) thin[row.symbol] = thinBars;
       }
     }
 
@@ -88,12 +136,14 @@ class MarketScanner {
     return ScanOutcome(
       signals: signals,
       errors: errors,
+      thin: thin,
       at: at,
       dataSourceId: source.id,
     );
   }
 
-  Future<({String symbol, SignalScore? signal, String? error})> _scanOne(
+  Future<({String symbol, SignalScore? signal, String? error, int? thinBars})>
+      _scanOne(
     String symbol, {
     required BarInterval interval,
     required DateTime now,
@@ -107,11 +157,12 @@ class MarketScanner {
         limit: barsPerSymbol,
       );
       final bars = batch.bars;
-      if (bars.length < 60) {
+      if (bars.length < minBars) {
         return (
           symbol: symbol,
           signal: null,
-          error: 'only ${bars.length} bars available',
+          error: null,
+          thinBars: bars.length,
         );
       }
       final bundle = IndicatorBundle(bars);
@@ -132,11 +183,13 @@ class MarketScanner {
         signal: decision.signal.copyWith(
           sourceId: batch.sourceId,
           lastBarAt: bars.last.time,
+          sessionDollarVolume: sessionDollarVolume(bars, interval),
         ),
         error: null,
+        thinBars: null,
       );
     } catch (e) {
-      return (symbol: symbol, signal: null, error: e.toString());
+      return (symbol: symbol, signal: null, error: e.toString(), thinBars: null);
     }
   }
 
@@ -176,7 +229,7 @@ class MarketScanner {
       interval: interval,
       limit: bars,
     );
-    if (history.length < 60) return null;
+    if (history.length < minBars) return null;
     final snapshot = estimator.estimate(history);
     final model = modelFor(symbol);
     _trainIncremental(symbol.toUpperCase(), history, snapshot, model);

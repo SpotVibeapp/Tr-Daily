@@ -53,6 +53,41 @@ void main() {
     broker = AlpacaBroker(keys: keys, mode: BrokerMode.paper, client: client);
   });
 
+  group('closing a position', () {
+    test('cancels that name\'s open orders, then closes', () async {
+      broker.cancelSettle = Duration.zero;
+      client.arrayQueue.add(<dynamic>[
+        <String, dynamic>{
+          'id': 'leg-stop',
+          'symbol': 'PLUG',
+          'side': 'sell',
+          'type': 'stop',
+          'status': 'held',
+          'qty': '6',
+          'submitted_at': '2026-06-10T14:30:00Z',
+        },
+        <String, dynamic>{
+          'id': 'other',
+          'symbol': 'SOFI',
+          'side': 'sell',
+          'type': 'limit',
+          'status': 'new',
+          'qty': '3',
+          'submitted_at': '2026-06-10T14:30:00Z',
+        },
+      ]);
+      await broker.closePosition('plug');
+      final calls = [
+        for (final r in client.requests) '${r.method} ${r.url.path}',
+      ];
+      expect(calls, <String>[
+        'GET /v2/orders',
+        'DELETE /v2/orders/leg-stop',
+        'DELETE /v2/positions/PLUG',
+      ]);
+    });
+  });
+
   group('auth & endpoints', () {
     test('account request hits paper base with key headers', () async {
       client.responseQueue.add(<String, dynamic>{
