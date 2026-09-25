@@ -119,6 +119,64 @@ bool isEarlyCloseDay(DateTime day) {
   return false;
 }
 
+/// Minutes until the regular-session close (16:00 ET, 13:00 on early-close
+/// days). Null on weekends and holidays. Negative after the close.
+int? minutesUntilClose(DateTime now) {
+  final et = toEastern(now);
+  if (et.weekday == DateTime.saturday || et.weekday == DateTime.sunday) {
+    return null;
+  }
+  final day = DateTime(et.year, et.month, et.day);
+  if (isMarketHoliday(day)) return null;
+  final close = isEarlyCloseDay(day) ? 13 * 60 : 16 * 60;
+  final minutes = et.hour * 60 + et.minute;
+  return close - minutes;
+}
+
+/// Last [minutesBefore] of the regular session. Used to flatten day trades
+/// while the market is still open, so they are not held overnight.
+bool inFlattenWindow(DateTime now, {int minutesBefore = 15}) {
+  final left = minutesUntilClose(now);
+  if (left == null) return false;
+  return left > 0 && left <= minutesBefore;
+}
+
+/// After-hours: 16:00–20:00 ET on a full trading day. Early-close days end at
+/// the early close; this does not invent a later session.
+bool isAfterHours(DateTime now) {
+  final et = toEastern(now);
+  if (et.weekday == DateTime.saturday || et.weekday == DateTime.sunday) {
+    return false;
+  }
+  final day = DateTime(et.year, et.month, et.day);
+  if (isMarketHoliday(day) || isEarlyCloseDay(day)) return false;
+  final minutes = et.hour * 60 + et.minute;
+  return minutes >= 16 * 60 && minutes < 20 * 60;
+}
+
+/// 04:00–20:00 ET on a trading day, ending at the early close on those days.
+bool isExtendedSession(DateTime now) =>
+    isPreMarket(now) || isMarketOpen(now) || isAfterHours(now);
+
+/// Whether a running engine may send a new order. Scanning is separate and
+/// continues while the engine is on, including when this returns false.
+bool canOpenNewTrade({
+  required bool force,
+  required bool sessionOpen,
+  required bool extendedHoursEnabled,
+  required bool extendedSession,
+  required bool tradeWhileClosed,
+  required bool liveBroker,
+  required bool halted,
+}) {
+  if (halted) return false;
+  if (force) return true;
+  if (sessionOpen) return true;
+  if (extendedHoursEnabled && extendedSession) return true;
+  if (tradeWhileClosed && !liveBroker) return true;
+  return false;
+}
+
 /// Regular session check for [now] (any tz). True during 09:30–16:00 ET on a
 /// trading day (13:00 close on early-close days).
 bool isMarketOpen(DateTime now) {

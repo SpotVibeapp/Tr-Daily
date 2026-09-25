@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import '../core/secrets.dart';
+import '../engine/cost_gate.dart';
 import 'csv_parser.dart';
 import 'models.dart';
 
@@ -22,6 +23,63 @@ abstract class MarketDataSource {
 
   /// Last trade/close price if the source can provide it cheaply.
   Future<double?> getLastPrice(String symbol);
+
+  /// Latest bid and ask. The default is null: a source that cannot see a
+  /// quote must not invent a tight spread.
+  Future<BidAsk?> getQuote(String symbol) async => null;
+
+  /// Quotes for [symbols]. Missing names are omitted, not filled with a guess.
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async {
+    final out = <String, BidAsk>{};
+    for (final raw in symbols) {
+      final quote = await getQuote(raw);
+      if (quote != null && quote.usable) out[raw.toUpperCase()] = quote;
+    }
+    return out;
+  }
+}
+
+/// Bars plus the feed that actually returned them.
+class BarBatch {
+  const BarBatch({required this.bars, required this.sourceId});
+
+  final List<Candle> bars;
+  final String sourceId;
+}
+
+/// Load bars and remember which feed succeeded. A composite source reports
+/// the child id, not the joined name, so demo data can be told from a live feed.
+Future<BarBatch> loadBars(
+  MarketDataSource source, {
+  required String symbol,
+  required BarInterval interval,
+  int limit = 400,
+  DateTime? end,
+}) async {
+  if (source is CompositeDataSource) {
+    final errors = <String>[];
+    for (final child in source.sources) {
+      try {
+        final bars = await child.getBars(
+          symbol: symbol,
+          interval: interval,
+          limit: limit,
+          end: end,
+        );
+        return BarBatch(bars: bars, sourceId: child.id);
+      } catch (e) {
+        errors.add('${child.id}: $e');
+      }
+    }
+    throw DataSourceException('all sources failed: ${errors.join(' | ')}');
+  }
+  final bars = await source.getBars(
+    symbol: symbol,
+    interval: interval,
+    limit: limit,
+    end: end,
+  );
+  return BarBatch(bars: bars, sourceId: source.id);
 }
 
 /// Thrown when a source cannot satisfy a request (network, quota, parsing).
@@ -139,6 +197,75 @@ class YahooFinanceSource implements MarketDataSource {
     );
     return bars.isEmpty ? null : bars.last.close;
   }
+
+  /// Last daily closes for a budget screen. One small chart request per
+  /// symbol, a few at a time, so a 30-name sleeve check does not open
+  /// 30 intraday histories.
+  Future<Map<String, double>> quoteMany(List<String> symbols) async {
+    final out = <String, double>{};
+    const width = 4;
+    for (var i = 0; i < symbols.length; i += width) {
+      final end = i + width > symbols.length ? symbols.length : i + width;
+      final slice = symbols.sublist(i, end);
+      final batch = await Future.wait(slice.map(_quoteClose));
+      for (final row in batch) {
+        if (row != null) out[row.key] = row.value;
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async {
+    final out = <String, BidAsk>{};
+    const width = 20;
+    for (var i = 0; i < symbols.length; i += width) {
+      final end = i + width > symbols.length ? symbols.length : i + width;
+      final slice = symbols.sublist(i, end);
+      final joined = slice.map((s) => s.toUpperCase()).join(',');
+      try {
+        final uri = Uri.parse(
+          'https://query1.finance.yahoo.com/v7/finance/quote?symbols=$joined',
+        );
+        final resp = await _client.get(uri, headers: <String, String>{
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+          'Accept': 'application/json',
+        }).timeout(const Duration(seconds: 12));
+        if (resp.statusCode != 200) continue;
+        out.addAll(parseYahooQuotes(jsonDecode(resp.body)));
+      } catch (_) {
+        // This batch failed. Other symbols can still be quoted.
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async {
+    final batch = await getQuotes(<String>[symbol]);
+    return batch[symbol.toUpperCase()];
+  }
+
+  Future<MapEntry<String, double>?> _quoteClose(String symbol) async {
+    final sym = symbol.toUpperCase();
+    try {
+      final uri = Uri.parse('$_base/$sym?interval=1d&range=5d');
+      final resp = await _client.get(uri, headers: <String, String>{
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+        'Accept': 'application/json',
+      }).timeout(const Duration(seconds: 12));
+      if (resp.statusCode != 200) return null;
+      final bars = _parseChart(
+        jsonDecode(resp.body) as Map<String, dynamic>,
+        sym,
+        BarInterval.oneDay,
+      );
+      if (bars.isEmpty || bars.last.close <= 0) return null;
+      return MapEntry(sym, bars.last.close);
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 /// Alpaca market data (free IEX feed for basic plans). Requires API keys.
@@ -235,6 +362,84 @@ class AlpacaDataSource implements MarketDataSource {
     final px = quote == null ? null : (quote['ap'] as num? ?? quote['bp'] as num?);
     return px?.toDouble();
   }
+
+  /// One snapshots call for the budget screen. Empty on any failure so the
+  /// caller can fall through to another live source.
+  Future<Map<String, double>> quoteMany(List<String> symbols) async {
+    if (symbols.isEmpty) return <String, double>{};
+    try {
+      final joined = symbols.map((s) => s.toUpperCase()).join(',');
+      final uri = Uri.parse(
+        '$_base/v2/stocks/snapshots?symbols=$joined&feed=iex',
+      );
+      final resp = await _client
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 20));
+      if (resp.statusCode != 200) return <String, double>{};
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map) return <String, double>{};
+      final asMap = Map<dynamic, dynamic>.from(decoded);
+      final nested = asMap['snapshots'];
+      final raw = nested is Map ? Map<dynamic, dynamic>.from(nested) : asMap;
+      final out = <String, double>{};
+      raw.forEach((key, value) {
+        if (key == 'snapshots' || value is! Map) return;
+        final px = _snapshotPrice(Map<dynamic, dynamic>.from(value));
+        if (px != null && px > 0) out[key.toString().toUpperCase()] = px;
+      });
+      return out;
+    } catch (_) {
+      return <String, double>{};
+    }
+  }
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async {
+    if (symbols.isEmpty) return <String, BidAsk>{};
+    try {
+      final joined = symbols.map((s) => s.toUpperCase()).join(',');
+      final uri = Uri.parse(
+        '$_base/v2/stocks/snapshots?symbols=$joined&feed=iex',
+      );
+      final resp = await _client
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 20));
+      if (resp.statusCode != 200) return <String, BidAsk>{};
+      return parseAlpacaQuotes(jsonDecode(resp.body));
+    } catch (_) {
+      return <String, BidAsk>{};
+    }
+  }
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async {
+    final uri = Uri.parse('$_base/v2/stocks/$symbol/quotes/latest?feed=iex');
+    try {
+      final resp = await _client
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 12));
+      if (resp.statusCode != 200) return null;
+      final root = jsonDecode(resp.body);
+      if (root is! Map) return null;
+      final quote = root['quote'];
+      if (quote is! Map) return null;
+      return BidAsk.tryMake(quote['bp'] as num?, quote['ap'] as num?);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static double? _snapshotPrice(Map<dynamic, dynamic> snap) {
+    final trade = snap['latestTrade'];
+    final minute = snap['minuteBar'];
+    final daily = snap['dailyBar'];
+    if (trade is Map && trade['p'] is num) return (trade['p'] as num).toDouble();
+    if (minute is Map && minute['c'] is num) {
+      return (minute['c'] as num).toDouble();
+    }
+    if (daily is Map && daily['c'] is num) return (daily['c'] as num).toDouble();
+    return null;
+  }
 }
 
 /// Deterministic synthetic market data for offline demo, tests, and
@@ -251,6 +456,13 @@ class SyntheticMarketSource implements MarketDataSource {
 
   @override
   String get id => 'synthetic';
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async => null;
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async =>
+      <String, BidAsk>{};
 
   @override
   Future<List<Candle>> getBars({
@@ -318,6 +530,13 @@ class BundledCsvSource implements MarketDataSource {
 
   @override
   String get id => 'bundled';
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async => null;
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async =>
+      <String, BidAsk>{};
 
   @override
   Future<List<Candle>> getBars({
@@ -398,5 +617,32 @@ class CompositeDataSource implements MarketDataSource {
       } catch (_) {}
     }
     return null;
+  }
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async {
+    final pending = symbols.map((s) => s.toUpperCase()).toSet();
+    final out = <String, BidAsk>{};
+    for (final source in sources) {
+      if (pending.isEmpty) break;
+      try {
+        final batch = await source.getQuotes(pending.toList());
+        for (final entry in batch.entries) {
+          if (!entry.value.usable) continue;
+          final symbol = entry.key.toUpperCase();
+          out[symbol] = entry.value;
+          pending.remove(symbol);
+        }
+      } catch (_) {
+        // This source had no quotes. Try the next one.
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async {
+    final batch = await getQuotes(<String>[symbol]);
+    return batch[symbol.toUpperCase()];
   }
 }

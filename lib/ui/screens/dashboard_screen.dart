@@ -4,6 +4,10 @@ import '../../broker/alpaca_broker.dart';
 import '../../core/pdt.dart';
 import '../../core/time.dart';
 import '../../data/models.dart';
+import '../../engine/budget.dart';
+import '../../engine/scale.dart';
+import '../../risk/risk_manager.dart';
+import '../../analysis/news_review.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -86,6 +90,17 @@ class DashboardScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      if (state.settings.scaleWithBalance) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _scaleLine(state),
+                          style: const TextStyle(
+                            color: TrTheme.textMuted,
+                            fontSize: 12,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       Row(
                         children: [
@@ -148,10 +163,7 @@ class DashboardScreen extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              state.engineRunning
-                                  ? 'Scanning ${state.settings.watchlist.length} symbols '
-                                      'every ${state.settings.scanIntervalSeconds}s'
-                                  : 'Start it to scan & trade automatically',
+                              _engineCaption(state),
                               style: const TextStyle(
                                 color: TrTheme.textMuted,
                                 fontSize: 11.5,
@@ -172,6 +184,18 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
+                Text(
+                  _goalCaption(state),
+                  style: const TextStyle(
+                    color: TrTheme.textMuted,
+                    fontSize: 11.5,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                _BudgetBanner(state: state),
+                _NewsBanner(state: state),
 
                 if (state.risk.isHalted)
                   Container(
@@ -268,8 +292,25 @@ class DashboardScreen extends StatelessWidget {
 
   /// Pattern-day-trader awareness: broker-reported (live) or estimated from
   /// the paper fill log.
+  String _scaleLine(AppState state) {
+    final plan = scalePlan(
+      account: state.account,
+      settings: state.settings,
+      dayTradeCount: 0,
+    );
+    final band = switch (plan.band) {
+      AccountBand.fullDayTrade => 'Full day trading is available.',
+      AccountBand.building =>
+        'Building — full day trading starts at \$25,000.',
+      AccountBand.micro => 'Small-account range until the next session is higher.',
+    };
+    return 'Sized from today\'s start ${TrTheme.money(plan.dayStartEquity)}. $band';
+  }
+
   PdtSnapshot _pdt() {
-    final equity = state.account.equity;
+    final equity = state.settings.scaleWithBalance
+        ? dayStartEquityOf(state.account)
+        : state.account.equity;
     final brokerIsLive = state.broker.mode == BrokerMode.live;
     if (brokerIsLive) {
       return reportedPdt(
@@ -407,6 +448,137 @@ class _SessionBadge extends StatelessWidget {
   }
 }
 
+class _NewsBanner extends StatelessWidget {
+  const _NewsBanner({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!state.settings.useNews) return const SizedBox.shrink();
+    final review = state.engine?.lastNewsReview ?? state.newsReview;
+    final summary = review?.summary ?? state.backgroundNewsSummary;
+    if (summary == null || summary.isEmpty) return const SizedBox.shrink();
+    final opportunities = review?.opportunities ?? const <NewsOpportunity>[];
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: TrTheme.surface2,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: TrTheme.outline),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'NEWS REVIEW',
+            style: TextStyle(
+              color: TrTheme.textMuted,
+              fontSize: 11,
+              letterSpacing: 1,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            summary,
+            style: const TextStyle(fontSize: 12.5, height: 1.35),
+          ),
+          for (final opp in opportunities.take(3)) ...[
+            const SizedBox(height: 6),
+            Text(
+              opp.note,
+              style: const TextStyle(color: TrTheme.textMuted, fontSize: 11.5, height: 1.3),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BudgetBanner extends StatelessWidget {
+  const _BudgetBanner({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!state.settings.fitToBudget) return const SizedBox.shrink();
+    final maxPx = maxAffordableSharePrice(
+      state.account,
+      state.settings.risk,
+      sizingEquity: state.settings.scaleWithBalance
+          ? dayStartEquityOf(state.account)
+          : null,
+    );
+    final snap = state.budget.last;
+    final small = maxPx > 0 && maxPx < 80;
+    if (!small && !snap.active) return const SizedBox.shrink();
+    final ceiling = state.settings.budgetShareCeiling <= 0
+        ? BudgetSession.defaultPreferredCeiling
+        : state.settings.budgetShareCeiling;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: TrTheme.accent.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: TrTheme.accent.withOpacity(0.45)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'FITTING TRADES TO CASH',
+              style: TextStyle(
+                color: TrTheme.accent,
+                fontSize: 10,
+                letterSpacing: 1,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'One new share can cost up to ${TrTheme.money(maxPx)} '
+              '(${state.settings.risk.maxPositionPct.round()}% of equity). '
+              'More expensive watchlist names are skipped. If none fit, listed '
+              'stocks at or under ${TrTheme.money(ceiling)} are scanned instead. '
+              '${state.settings.scaleWithBalance ? 'A larger balance still scans some lower-priced names. ' : ''}'
+              'Not OTC penny stocks. This does not guarantee a profit.',
+              style: const TextStyle(
+                color: TrTheme.textMuted,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+            if (snap.sleeve.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Budget names: ${snap.sleeve.join(', ')}',
+                style: const TextStyle(
+                  color: TrTheme.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ] else if (snap.summary.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                snap.summary,
+                style: const TextStyle(color: TrTheme.textMuted, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ModeChip extends StatelessWidget {
   const _ModeChip({required this.state});
 
@@ -485,4 +657,50 @@ class _NotificationBell extends StatelessWidget {
       ],
     );
   }
+}
+
+String _engineCaption(AppState state) {
+  if (!state.engineRunning) {
+    return 'Off until you turn it on. On Android it can keep scanning after you close the app.';
+  }
+  if (state.settings.liveTrading && state.backgroundRunning) {
+    return 'LIVE. Closing the app does not stop orders. Turn this off to stop.';
+  }
+  if (state.settings.liveTrading) {
+    return 'LIVE. Keep-alive is not running, so leaving the app can stop orders.';
+  }
+  if (state.backgroundRunning) {
+    return state.settings.scanListedMarket
+        ? 'Keeps walking the listed market if you close the app. Notification stays up.'
+        : 'Keeps scanning if you close the app. Notification stays up.';
+  }
+  if (state.settings.scanListedMarket) {
+    final range = state.marketScan.last.rangeLabel;
+    final where = range.isEmpty ? 'the listed market' : 'listed $range';
+    return 'Walking $where, plus the watchlist, every ${state.settings.scanIntervalSeconds}s.';
+  }
+  final sleeve = state.budget.last.sleeve.length;
+  return 'Scanning ${state.settings.watchlist.length} watchlist'
+      '${sleeve == 0 ? '' : ' + $sleeve budget'}'
+      ' names every ${state.settings.scanIntervalSeconds}s';
+}
+
+String _goalCaption(AppState state) {
+  final risk = state.settings.risk;
+  final pnl = state.account.dayPnlPct;
+  final goal = risk.dailyProfitGoalPct;
+  final reached = dailyProfitGoalReached(dayPnlPct: pnl, goalPct: goal);
+  final loss = risk.maxDailyLossPct.toStringAsFixed(1);
+  final stop = risk.stopLossAtrMult.toStringAsFixed(1);
+  final target = risk.takeProfitAtrMult.toStringAsFixed(1);
+  final run = risk.letWinnersRun
+      ? 'A winner can keep going past that point.'
+      : 'The whole trade sells at that point.';
+  if (reached) {
+    return 'Daily goal of ${goal.toStringAsFixed(0)}% is reached. More is allowed. Loss stop is -$loss%. This is not a guarantee.';
+  }
+  final goalText = goal <= 0
+      ? 'No daily profit goal.'
+      : 'Daily goal ${goal.toStringAsFixed(0)}% — not a cap, and not a promise.';
+  return '$goalText Loss stop -$loss% halts the day. Per trade: stop $stop× ATR, profit point $target× ATR. $run';
 }

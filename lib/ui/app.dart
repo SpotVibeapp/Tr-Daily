@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../engine/keep_alive_hooks.dart';
 import '../state/app_state.dart';
 import 'screens/home_shell.dart';
 import 'theme.dart';
@@ -13,12 +14,12 @@ class TrDailyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: state,
-      builder: (context, _) => MaterialApp(
+      builder: (context, _) => KeepAliveHooks.wrap(MaterialApp(
         title: 'Tr-Daily',
         debugShowCheckedModeBanner: false,
         theme: TrTheme.dark(),
         home: HomeShell(state: state),
-      ),
+      )),
     );
   }
 }

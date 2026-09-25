@@ -4,10 +4,18 @@ import 'dart:convert';
 import '../broker/alpaca_broker.dart';
 import '../broker/paper_broker.dart';
 import '../core/config.dart';
+import '../core/pdt.dart';
 import '../core/time.dart';
+import 'cost_gate.dart';
+import 'day_trade.dart';
+import 'scan_quality.dart';
+import 'scale.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
+import '../analysis/news_review.dart';
 import '../risk/risk_manager.dart';
+import 'budget.dart';
+import 'market_scan.dart';
 import 'scanner.dart';
 
 enum EngineState { stopped, starting, running, halted }
@@ -46,9 +54,10 @@ class PositionMeta {
 /// The autonomous loop: scan → score → risk-check → execute → manage exits.
 ///
 /// Platform-agnostic (dart:async only) so the same engine can run in the app,
-/// a CLI, or a server later. Mobile OSes suspend background work — while the
-/// app is foregrounded the engine ticks every [AppSettings.scanIntervalSeconds]
-/// during market hours.
+/// a CLI, or a server later. On Android a foreground service calls [tick]
+/// after the UI is closed. Other platforms tick only while the process is
+/// alive. Each tick reviews company and world headlines when a [NewsDesk] is
+/// set, then follows [AppSettings.scanIntervalSeconds] during market hours.
 class TraderEngine {
   TraderEngine({
     required this.broker,
@@ -56,8 +65,13 @@ class TraderEngine {
     required this.scanner,
     required this.settings,
     required this.risk,
+    BudgetSession? budget,
+    MarketScan? marketScan,
     DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now {
+    this.news,
+  })  : budget = budget ?? BudgetSession(),
+        marketScan = marketScan ?? MarketScan(),
+        _clock = clock ?? DateTime.now {
     final b = broker;
     if (b is PaperBroker) {
       b.setAllowShort(settings.allowShort);
@@ -67,9 +81,20 @@ class TraderEngine {
   final Broker broker;
   final MarketDataSource source;
   final MarketScanner scanner;
-  final AppSettings settings;
+  AppSettings settings;
   final RiskManager risk;
+  final BudgetSession budget;
+  final MarketScan marketScan;
   final DateTime Function() _clock;
+
+  /// When set, every scan reviews company and world headlines before entries
+  /// and while a position is open. Tests omit it.
+  final NewsDesk? news;
+
+  String? _lastBudgetSummary;
+  DateTime? _lastBudgetEmitAt;
+  final Set<String> _notedOnce = <String>{};
+  String? _quietNotedKey;
 
   final StreamController<EngineEvent> _events =
       StreamController<EngineEvent>.broadcast();
@@ -82,6 +107,8 @@ class TraderEngine {
   String? lastError;
   int cycleCount = 0;
   List<SignalScore> lastSignals = const <SignalScore>[];
+  NewsReview? lastNewsReview;
+  String? _lastNewsSignature;
 
   /// symbol -> entry-time management state (in-memory; reseeded on restart).
   final Map<String, PositionMeta> _meta = <String, PositionMeta>{};
@@ -93,10 +120,59 @@ class TraderEngine {
   /// Orders awaiting confirmation (fill reconciliation).
   final Map<String, Order> _pendingOrders = <String, Order>{};
 
+  /// Bid/ask read for the current scan. Not a guess when a name is missing.
+  final Map<String, BidAsk> _quotes = <String, BidAsk>{};
+
   bool get isRunning => state == EngineState.running || state == EngineState.starting;
 
   /// Reconciliation view for the UI: orders not yet confirmed filled.
   List<Order> get pendingOrders => List<Order>.unmodifiable(_pendingOrders.values);
+
+  void _noteOnce(DateTime now, String message, {required bool notedDay}) {
+    if (!notedDay) return;
+    final et = toEastern(now);
+    final key = '${et.year}-${et.month}-${et.day}|$message';
+    if (!_notedOnce.add(key)) return;
+    _emit('info', message);
+  }
+
+  void _noteSkips(
+    DateTime now, {
+    required List<String> quiet,
+    required List<String> oversized,
+  }) {
+    if (quiet.isEmpty && oversized.isEmpty) return;
+    final min = settings.minTargetPct.toStringAsFixed(1);
+    final parts = <String>[];
+    if (quiet.isNotEmpty) {
+      parts.add(
+        'Skipped ${quiet.join(', ')} — target move is under $min% of price',
+      );
+    }
+    if (oversized.isNotEmpty) {
+      parts.add(
+        'Skipped ${oversized.join(', ')} — one share would risk more than '
+        '2.5× the risk-per-trade setting',
+      );
+    }
+    final summary = parts.join('. ');
+    final et = toEastern(now);
+    final key = '${et.year}-${et.month}-${et.day}-${et.hour}-${et.minute ~/ 15}|$summary';
+    if (_quietNotedKey == key) return;
+    _quietNotedKey = key;
+    _emit('info', summary);
+  }
+
+  void _noteBudget(String summary, DateTime now) {
+    if (summary.isEmpty) return;
+    final recent = _lastBudgetSummary == summary &&
+        _lastBudgetEmitAt != null &&
+        now.difference(_lastBudgetEmitAt!) < const Duration(minutes: 15);
+    if (recent) return;
+    _lastBudgetSummary = summary;
+    _lastBudgetEmitAt = now;
+    _emit('info', summary);
+  }
 
   void _emit(String type, String message,
       {SignalScore? signal, String? symbol}) {
@@ -105,15 +181,20 @@ class TraderEngine {
   }
 
   /// Start the periodic loop. Safe to call when already running.
-  void start() {
+  ///
+  /// [periodic] is false when a foreground service calls [tick] itself.
+  void start({bool periodic = true}) {
     if (isRunning) return;
     state = EngineState.starting;
     _emit('info', 'engine starting (${broker.id}, interval ${settings.interval.name})');
     _timer?.cancel();
-    _timer = Timer.periodic(
-      Duration(seconds: settings.scanIntervalSeconds.clamp(10, 3600)),
-      (_) => unawaited(tick()),
-    );
+    _timer = null;
+    if (periodic) {
+      _timer = Timer.periodic(
+        Duration(seconds: settings.scanIntervalSeconds.clamp(10, 3600)),
+        (_) => unawaited(tick()),
+      );
+    }
     state = EngineState.running;
     unawaited(tick());
   }
@@ -125,35 +206,66 @@ class TraderEngine {
     _emit('info', 'engine stopped');
   }
 
+  bool _tickBusy = false;
+
   /// One full cycle — exposed for manual "Scan now" buttons & tests.
   Future<void> tick({bool force = false}) async {
+    if (_tickBusy) return;
     final now = _clock();
     if (state == EngineState.stopped && !force) return;
-    if (risk.isHalted && state != EngineState.halted) {
-      state = EngineState.halted;
-    }
+    // A new session re-arms the daily loss stop without a second Start tap.
+    // Closing the app is not a stop. Only Stop, Force Stop, or the phone
+    // being off stops the scan. The loss stop is the exception the user asked
+    // for, and it lasts for that day only.
+    risk.checkNewDay(now);
     final sessionOpen = isMarketOpen(now);
-    if (!sessionOpen && !settings.tradeWhileClosed && !force) {
-      _emit('info', 'market closed (${sessionLabel(now)}) — scan skipped');
-      return;
-    }
     if (risk.isHalted) {
       state = EngineState.halted;
-      _emit('halt', 'halted: ${risk.haltReason}');
-      return;
+    } else {
+      state = EngineState.running;
     }
-    state = EngineState.running;
     cycleCount++;
-
+    _tickBusy = true;
     try {
-      // 1) Fresh prices for every watchlist symbol.
+      // Held names stay in the scan even after they leave the watchlist,
+      // which is how a budget-sleeve position still gets exit management.
+      final extraHeld = <String>[];
+      try {
+        final pre = await broker.getPositions();
+        for (final p in pre) {
+          final sym = p.symbol.toUpperCase();
+          final onList = settings.watchlist
+              .any((w) => w.toUpperCase() == sym);
+          if (!onList && !extraHeld.contains(sym)) extraHeld.add(sym);
+        }
+      } catch (e) {
+        _emit('error', 'could not load positions before scan: $e');
+      }
+
+      // 1) Watchlist and held names every pass. When the listed-market walk
+      // is on, also chart the next slice. The watchlist is not a lock.
+      final pass = await marketScan.next(
+        enabled: settings.scanListedMarket,
+        priority: <String>[...settings.watchlist, ...extraHeld],
+        keys: settings.keys,
+        mode: settings.brokerMode,
+      );
+      if (settings.scanListedMarket && pass.universeSize > 0) {
+        final where = pass.kind == MarketListKind.backup
+            ? 'The full listed list was unavailable, so this pass uses the backup names.'
+            : '${pass.universeSize} listed names, $listedNamesPerPass new charts each pass, plus the watchlist every pass.';
+        _noteOnce(
+          now,
+          'Listed market scan is on. $where Not every chart at once, and not OTC. This does not guarantee a profit.',
+          notedDay: true,
+        );
+      }
       final outcome = await scanner.scan(
-        settings.watchlist,
+        pass.symbols,
         interval: settings.interval,
         now: now,
       );
       lastScanAt = now;
-      lastSignals = outcome.signals;
       if (outcome.hasErrors) {
         lastError = outcome.errors.entries.map((e) => '${e.key}: ${e.value}').join('; ');
         lastErrorAt = now;
@@ -165,44 +277,420 @@ class TraderEngine {
         final pb = broker as PaperBroker;
         pb.rollDay(now);
         for (final s in outcome.signals) {
+          if (isDemoSource(s.sourceId)) continue;
           pb.setPrice(s.symbol, s.price);
         }
       }
 
-      final account = await broker.getAccount();
-      final positions = await broker.getPositions();
+      var account = await broker.getAccount();
+      var signals = outcome.signals;
+      var plan = _planFor(account, now);
 
-      // 3) Daily-loss circuit breaker.
+      if (budget.shouldScreen(
+        settings: settings,
+        account: account,
+        watchlistSignals: outcome.signals,
+        now: now,
+        plan: plan,
+      )) {
+        _emit(
+          'info',
+          'Watchlist does not fit this account. Checking listed names you can afford…',
+        );
+      }
+      final advice = await budget.advise(
+        settings: settings,
+        account: account,
+        watchlistSignals: outcome.signals,
+        source: source,
+        now: now,
+        plan: plan,
+      );
+      if (advice.sleeve.isNotEmpty) {
+        final have = signals.map((s) => s.symbol.toUpperCase()).toSet();
+        final extra = advice.sleeve.where((s) => !have.contains(s)).toList();
+        if (extra.isNotEmpty) {
+          final previousSource = scanner.source;
+          scanner.source = liveScanSource(source);
+          final ScanOutcome sleeveOutcome;
+          try {
+            sleeveOutcome = await scanner.scan(
+              extra,
+              interval: settings.interval,
+              now: now,
+            );
+          } finally {
+            scanner.source = previousSource;
+          }
+          if (broker is PaperBroker) {
+            final pb = broker as PaperBroker;
+            for (final s in sleeveOutcome.signals) {
+              if (isDemoSource(s.sourceId)) continue;
+              pb.setPrice(s.symbol, s.price);
+            }
+          }
+          signals = <SignalScore>[...signals, ...sleeveOutcome.signals]
+            ..sort((a, b) => b.score.abs().compareTo(a.score.abs()));
+          if (sleeveOutcome.hasErrors) {
+            final sleeveError = sleeveOutcome.errors.entries
+                .map((e) => '${e.key}: ${e.value}')
+                .join('; ');
+            lastError = lastError == null
+                ? sleeveError
+                : '$lastError; $sleeveError';
+            lastErrorAt = now;
+          }
+          account = await broker.getAccount();
+          plan = _planFor(account, now);
+        }
+      }
+      if (advice.active) _noteBudget(advice.summary, now);
+      if (plan.summary.isNotEmpty) {
+        _noteOnce(now, plan.summary, notedDay: true);
+      }
+      lastSignals = signals;
+
+      final positions = await broker.getPositions();
+      await _reviewNews(signals, positions, now);
+      await _loadQuotes(<String>[
+        ...settings.watchlist,
+        for (final position in positions) position.symbol,
+        for (final signal in signals) signal.symbol,
+      ]);
+
+      // 3) Daily-loss stop. A profit goal is not a stop and must not halt.
+      var closedForLoss = false;
       if (risk.enforceDailyLoss(dayPnlPct: account.dayPnlPct, day: now)) {
         state = EngineState.halted;
-        _emit('halt', 'daily loss limit hit — closing positions & halting');
-        for (final p in positions) {
-          await _safe(() => broker.closePosition(p.symbol));
+        final et = toEastern(now);
+        final key = '${et.year}-${et.month}-${et.day}|daily-loss-close';
+        if (_notedOnce.add(key)) {
+          _emit(
+            'halt',
+            'Daily loss stop hit — closing positions. New trades wait until '
+                'the next session. Scanning continues. ${risk.haltReason ?? ''}',
+          );
+          for (final p in positions) {
+            await _sendExit(p, now, reason: 'daily loss stop');
+          }
+          closedForLoss = true;
         }
-        return;
+      } else if (dailyProfitGoalReached(
+        dayPnlPct: account.dayPnlPct,
+        goalPct: settings.risk.dailyProfitGoalPct,
+      )) {
+        _noteOnce(
+          now,
+          'Daily profit goal of '
+              '${settings.risk.dailyProfitGoalPct.toStringAsFixed(0)}% is '
+              'reached. Scanning continues. More profit is allowed. This is '
+              'not a guarantee.',
+          notedDay: true,
+        );
       }
 
-      // 4) Manage open positions: entry-anchored stops, trailing, scale-out,
-      //    ensemble exits.
-      await _manageExits(outcome.signals, positions);
+      // 4) Day trades are closed before the bell so they do not become holds.
+      final flattening = settings.flattenBeforeClose &&
+          !settings.allowOvernightHolds &&
+          inFlattenWindow(now);
+      if (!closedForLoss && flattening && positions.isNotEmpty) {
+        _noteOnce(
+          now,
+          'Closed into the session end — day trades are not held overnight',
+          notedDay: true,
+        );
+        for (final p in positions) {
+          await _close(
+            p,
+            'session ending — day trades are not held overnight',
+          );
+        }
+      }
 
-      // 5) Consider new entries (re-fetch positions after exits).
-      if (sessionOpen || settings.tradeWhileClosed) {
+      // 5) Manage whatever is still open: stops, trailing, scale-out.
+      final livePositions = flattening
+          ? await broker.getPositions()
+          : positions;
+      if (!closedForLoss) {
+        await _manageExits(signals, livePositions, now);
+      }
+
+      // 6) New entries. Skipped in the flatten window, after a loss stop, and
+      // outside a session that can actually trade. The scan itself continues.
+      final allowEntries = canOpenNewTrade(
+        force: force,
+        sessionOpen: sessionOpen,
+        extendedHoursEnabled: settings.extendedHours,
+        extendedSession: isExtendedSession(now),
+        tradeWhileClosed: settings.tradeWhileClosed,
+        liveBroker: broker.mode == BrokerMode.live,
+        halted: risk.isHalted,
+      );
+      if (flattening) {
+        _noteOnce(
+          now,
+          'No new entries — last 15 minutes, flattening day trades',
+          notedDay: true,
+        );
+      } else if (plan.pdtBlocked) {
+        _noteOnce(
+          now,
+          'No new entries — ${plan.dayTradeCount} day trades in 5 business '
+              'days, and today\'s start is under \$25,000. Full day trading '
+              'turns on at \$25,000. Open positions are still managed.',
+          notedDay: true,
+        );
+      } else if (!allowEntries) {
+        if (!risk.isHalted) {
+          _noteOnce(
+            now,
+            'Market is closed. Still scanning. New trades wait for the next '
+                'session. Closing the app does not stop this.',
+            notedDay: true,
+          );
+        }
+      } else if (allowEntries) {
         final openPositions = await broker.getPositions();
         final heldSymbols = openPositions.map((p) => p.symbol).toSet();
-        for (final sig in outcome.signals) {
-          if (sig.stance == Stance.flat) continue;
-          if (heldSymbols.contains(sig.symbol)) continue;
-          await _tryEnter(sig, account, openPositions, now);
+        final cap = settings.fitToBudget ? plan.maxSharePrice : null;
+        final blockShorts = !plan.allowShort;
+        final equity = plan.dayStartEquity > 0
+            ? plan.dayStartEquity
+            : (account.equity > 0 ? account.equity : account.cash);
+        final ranked = settings.dayTradeEdge
+            ? rankForDayTrade(signals)
+            : signals;
+        final quiet = <String>[];
+        final oversized = <String>[];
+        final working = <String>{
+          for (final order in _pendingOrders.values) order.symbol.toUpperCase(),
+        };
+        try {
+          final openOrders = await broker.getOpenOrders();
+          for (final order in openOrders) {
+            working.add(order.symbol.toUpperCase());
+          }
+        } catch (_) {
+          // The broker's open-order list could not be read. Local pending orders are still blocked.
         }
+        final freshSession = isMarketOpen(now) ||
+            (settings.extendedHours && isExtendedSession(now));
+        for (final sig in ranked) {
+          if (heldSymbols.contains(sig.symbol)) continue;
+          if (working.contains(sig.symbol.toUpperCase())) {
+            _noteOnce(
+              now,
+              'skip ${sig.symbol}: an order is already working. No second order was sent.',
+              notedDay: true,
+            );
+            continue;
+          }
+          if (isDemoSource(sig.sourceId) &&
+              !settings.risk.allowTradingWithoutData) {
+            _noteOnce(
+              now,
+              'skip ${sig.symbol}: the price came from demo data, not a live feed. No order was sent.',
+              notedDay: true,
+            );
+            continue;
+          }
+          if (barIsStale(
+            lastBarAt: sig.lastBarAt,
+            now: now,
+            interval: settings.interval.duration,
+            sessionExpectsFreshBars: freshSession,
+          )) {
+            _noteOnce(
+              now,
+              'skip ${sig.symbol}: the last bar is too old for a new trade. Scanning continues.',
+              notedDay: true,
+            );
+            continue;
+          }
+          final newsDecision = _newsEntry(sig);
+          var side = sig.stance;
+          var sizeMultiplier = 1.0;
+          String? newsNote;
+          if (newsDecision != null) {
+            sizeMultiplier = newsDecision.sizeMultiplier;
+            newsNote = newsDecision.reason;
+            if (newsDecision.action == NewsTradeAction.block ||
+                newsDecision.action == NewsTradeAction.exit) {
+              _noteOnce(now, newsDecision.reason, notedDay: true);
+              continue;
+            }
+            if (newsDecision.action == NewsTradeAction.promoteLong) {
+              side = Stance.long;
+            } else if (newsDecision.action == NewsTradeAction.promoteShort) {
+              side = Stance.short;
+            }
+          }
+          if (side == Stance.flat) continue;
+          // Whole shares only. A name above the cash cap is skipped here so
+          // the log is one summary, not a denial per ticker every minute.
+          if (cap != null && (cap <= 0 || sig.price > cap + 1e-6)) continue;
+          if (blockShorts && side == Stance.short) continue;
+          final promoted = newsDecision != null &&
+              (newsDecision.action == NewsTradeAction.promoteLong ||
+                  newsDecision.action == NewsTradeAction.promoteShort);
+          final targetPct = targetPctOfPrice(sig) ?? 0;
+          final riskPct = convictionRiskPct(
+            basePct: settings.risk.riskPerTradePct,
+            targetPct: targetPct,
+            confidence: sig.confidence,
+            minTargetPct: settings.minTargetPct,
+            enabled: settings.allowConvictionRisk,
+          );
+          if (riskPct > settings.risk.riskPerTradePct + 1e-9) {
+            _noteOnce(
+              now,
+              '${sig.symbol}: larger size — target '
+                  '${targetPct.toStringAsFixed(1)}% with '
+                  '${(sig.confidence * 100).round()}% confidence, risking '
+                  '${riskPct.toStringAsFixed(2)}% of today\'s start. '
+                  'Not a profit guarantee.',
+              notedDay: true,
+            );
+          }
+          if (settings.dayTradeEdge && !promoted) {
+            final verdict = risk.entry(
+              account: account,
+              positions: openPositions,
+              price: sig.price,
+              atr: _atrFromSignal(sig),
+              stance: sig.stance,
+              confidence: sig.confidence,
+              day: now,
+              sizingEquity: settings.scaleWithBalance ? equity : null,
+              riskPerTradePct: riskPct,
+            );
+            if (verdict.allowed) {
+              final fit = checkDayTradeVerdict(
+                sig: sig,
+                verdict: verdict,
+                equity: equity,
+                minTargetPct: settings.minTargetPct,
+                riskPerTradePct: riskPct,
+              );
+              if (!fit.allowed) {
+                if (fit.skip == DayTradeSkip.oversized) {
+                  oversized.add(sig.symbol);
+                } else {
+                  quiet.add(sig.symbol);
+                }
+                continue;
+              }
+            }
+          }
+          await _tryEnter(
+            sig,
+            account,
+            openPositions,
+            now,
+            sizingEquity: settings.scaleWithBalance ? equity : null,
+            riskPerTradePct: riskPct * sizeMultiplier,
+            side: side,
+            newsNote: sizeMultiplier < 1 ? newsNote : null,
+          );
+        }
+        _noteSkips(now, quiet: quiet, oversized: oversized);
       }
-      _emit('scan',
-          'scan #${outcome.signals.length} symbols · ${outcome.signals.where((s) => s.stance != Stance.flat).length} setups');
+      final scanBits = <String>[
+        'scan #${signals.length} symbols',
+        '${signals.where((s) => s.stance != Stance.flat).length} setups',
+      ];
+      if (marketScan.last.walkedMarket) {
+        scanBits.add('listed ${marketScan.last.rangeLabel}');
+      }
+      if (broker.mode == BrokerMode.live) scanBits.add('LIVE');
+      if (risk.isHalted) {
+        scanBits.add('daily loss stop');
+      } else if (!allowEntries) {
+        scanBits.add('market closed, still scanning');
+      } else if (dailyProfitGoalReached(
+        dayPnlPct: account.dayPnlPct,
+        goalPct: settings.risk.dailyProfitGoalPct,
+      )) {
+        scanBits.add('daily goal reached, still scanning');
+      }
+      _emit('scan', scanBits.join(' · '));
     } catch (e) {
       lastError = e.toString();
       lastErrorAt = now;
       _emit('error', 'cycle failed: $e');
+    } finally {
+      _tickBusy = false;
     }
+  }
+
+  Future<void> _reviewNews(
+    List<SignalScore> signals,
+    List<Position> positions,
+    DateTime now,
+  ) async {
+    final desk = news;
+    if (!settings.useNews || desk == null) {
+      lastNewsReview = null;
+      return;
+    }
+    final symbols = <String>[
+      for (final position in positions) position.symbol,
+      for (final symbol in settings.watchlist) symbol,
+      for (final signal in signals)
+        if (signal.stance != Stance.flat) signal.symbol,
+    ];
+    try {
+      final review = await desk.review(
+        symbols: symbols,
+        now: now,
+        charts: <String, SignalScore>{
+          for (final signal in signals) signal.symbol.toUpperCase(): signal,
+        },
+      );
+      lastNewsReview = review;
+      if (review.signature != _lastNewsSignature) {
+        _lastNewsSignature = review.signature;
+        _emit('news', review.summary);
+      }
+    } catch (e) {
+      lastNewsReview = NewsReview.unavailable(now, '$e');
+      if (lastNewsReview!.signature != _lastNewsSignature) {
+        _lastNewsSignature = lastNewsReview!.signature;
+        _emit('error', lastNewsReview!.summary);
+      }
+    }
+  }
+
+  NewsTradeDecision? _newsEntry(SignalScore sig) {
+    final review = lastNewsReview;
+    if (!settings.useNews || review == null) return null;
+    return decideTrade(
+      review: review,
+      symbol: sig.symbol,
+      chartStance: sig.stance,
+      chartScore: sig.score,
+      chartConfidence: sig.confidence,
+      enterThreshold: settings.ensemble.enterThreshold,
+      minConfidence: settings.ensemble.minConfidence,
+    );
+  }
+
+  String? _newsExitReason(Position position) {
+    final review = lastNewsReview;
+    if (!settings.useNews || review == null) return null;
+    final decision = decideTrade(
+      review: review,
+      symbol: position.symbol,
+      chartStance: position.short ? Stance.short : Stance.long,
+      chartScore: 0,
+      chartConfidence: 1,
+      enterThreshold: settings.ensemble.enterThreshold,
+      minConfidence: settings.ensemble.minConfidence,
+      heldLong: !position.short,
+      heldShort: position.short,
+    );
+    if (decision.action != NewsTradeAction.exit) return null;
+    return decision.reason;
   }
 
   /// Current ATR estimate implied by a signal's suggested stop.
@@ -237,11 +725,17 @@ class TraderEngine {
   Future<void> _manageExits(
     List<SignalScore> signals,
     List<Position> positions,
+    DateTime now,
   ) async {
     final scoreBySymbol = <String, SignalScore>{
       for (final s in signals) s.symbol: s,
     };
     for (final p in positions) {
+      final newsExit = _newsExitReason(p);
+      if (newsExit != null) {
+        await _close(p, newsExit);
+        continue;
+      }
       final sig = scoreBySymbol[p.symbol];
       final meta = _metaFor(p, sig);
       final px = sig?.price ?? p.currentPrice;
@@ -273,10 +767,38 @@ class TraderEngine {
         }
       }
 
-      // --- Hard stop / target vs current price ---
-      final stopHit = long ? px <= effectiveStop : px >= effectiveStop;
+      // --- Hard stop / profit point vs current price ---
+      // A profit point is customizable. With letWinnersRun it locks a stop
+      // there instead of selling the whole trade, so more can stay open.
+      var stopHit = long ? px <= effectiveStop : px >= effectiveStop;
       final targetHit = long ? px >= meta.target : px <= meta.target;
-      if (stopHit || targetHit) {
+      if (targetHit && settings.risk.letWinnersRun) {
+        final locked = lockedProfitStop(
+          long: long,
+          target: meta.target,
+          currentStop: effectiveStop,
+          targetHit: true,
+          allowMore: true,
+        );
+        if (locked != null) {
+          meta.initialStop = long
+              ? (locked > meta.initialStop ? locked : meta.initialStop)
+              : (locked < meta.initialStop ? locked : meta.initialStop);
+          effectiveStop = long
+              ? (locked > effectiveStop ? locked : effectiveStop)
+              : (locked < effectiveStop ? locked : effectiveStop);
+          _noteOnce(
+            now,
+            '${p.symbol}: profit point reached. Stop moved to that price so a '
+                'further move can stay open. Not a guarantee.',
+            notedDay: true,
+          );
+        }
+        final lockedAtTarget = (effectiveStop - meta.target).abs() < 0.0001;
+        final stillThrough = long ? px >= meta.target : px <= meta.target;
+        if (lockedAtTarget && stillThrough) stopHit = false;
+      }
+      if (stopHit || (targetHit && !settings.risk.letWinnersRun)) {
         final why = stopHit
             ? (effectiveStop != meta.initialStop ? 'trailing stop' : 'stop loss')
             : 'take profit';
@@ -299,12 +821,31 @@ class TraderEngine {
               .floorToDouble()
               .clamp(1.0, p.qty - 1);
           try {
-            await broker.submitOrder(OrderRequest(
+            final request = sessionOrder(
               symbol: p.symbol,
               side: long ? OrderSide.sell : OrderSide.buy,
-              type: OrderType.market,
               qty: part,
-            ));
+              regularSession: isMarketOpen(_clock()),
+              quote: _quotes[p.symbol.toUpperCase()],
+              allowOutside: _allowLimitOutside(_clock()),
+              extendedHours:
+                  settings.extendedHours && isExtendedSession(_clock()),
+            );
+            if (request == null) {
+              _noteOnce(
+                _clock(),
+                'No market scale-out for ${p.symbol}. The regular session is '
+                    'closed, and there was no bid/ask for a limit.',
+                notedDay: true,
+              );
+              continue;
+            }
+            final order = await broker.submitOrder(request);
+            if (request.type == OrderType.limit &&
+                order.filledQty <= 0 &&
+                broker is PaperBroker) {
+              continue;
+            }
             meta.scaledOut = true;
             _emit('trade',
                 'SCALE-OUT ${part.toStringAsFixed(0)}/${p.qty.toStringAsFixed(0)} '
@@ -340,32 +881,139 @@ class TraderEngine {
   }
 
   Future<void> _close(Position p, String reason, {PositionMeta? meta}) async {
+    await _sendExit(p, _clock(), reason: reason);
+  }
+
+  bool _allowLimitOutside(DateTime now) {
+    if (isMarketOpen(now)) return false;
+    if (settings.extendedHours && isExtendedSession(now)) return true;
+    return settings.tradeWhileClosed && broker.mode != BrokerMode.live;
+  }
+
+  Future<void> _loadQuotes(List<String> symbols) async {
+    _quotes.clear();
+    final wanted = symbols
+        .map((s) => s.toUpperCase())
+        .where((s) => s.isNotEmpty)
+        .toSet()
+        .toList();
+    if (wanted.isEmpty) return;
     try {
-      await broker.closePosition(p.symbol);
+      _quotes.addAll(await source.getQuotes(wanted));
+    } catch (e) {
+      _emit('info', 'Spread quotes were not readable: $e');
+    }
+  }
+
+  /// Regular session uses the broker close, which is a market order.
+  /// Outside that session a market order is not sent. A limit is used only
+  /// when a real bid/ask exists and the session can still take an order.
+  Future<bool> _sendExit(
+    Position p,
+    DateTime now, {
+    required String reason,
+  }) async {
+    final side = p.short ? OrderSide.buy : OrderSide.sell;
+    final request = sessionOrder(
+      symbol: p.symbol,
+      side: side,
+      qty: p.qty,
+      regularSession: isMarketOpen(now),
+      quote: _quotes[p.symbol.toUpperCase()],
+      allowOutside: _allowLimitOutside(now),
+      extendedHours: settings.extendedHours && isExtendedSession(now),
+    );
+    if (request == null) {
+      _noteOnce(
+        now,
+        'No market order for ${p.symbol}. The regular session is closed, and '
+            'there was no bid/ask for a limit. The position stays open. '
+            'This is not a guarantee.',
+        notedDay: true,
+      );
+      return false;
+    }
+    try {
+      if (request.type == OrderType.market) {
+        await broker.closePosition(p.symbol);
+      } else {
+        final order = await broker.submitOrder(request);
+        if (order.filledQty <= 0 && broker is PaperBroker) {
+          _noteOnce(
+            now,
+            '${p.symbol}: limit close at \$${request.limitPrice!.toStringAsFixed(2)} '
+                'was not filled. No market order was sent.',
+            notedDay: true,
+          );
+          return false;
+        }
+        _emit(
+          'exit',
+          'LIMIT close ${p.symbol} at \$${request.limitPrice!.toStringAsFixed(2)} '
+              '— $reason. Not a market order.',
+          symbol: p.symbol,
+        );
+        _meta.remove(p.symbol);
+        return true;
+      }
       _meta.remove(p.symbol);
-      _emit('exit',
-          'CLOSED ${p.symbol} ${p.short ? 'short' : 'long'} — $reason',
-          symbol: p.symbol);
+      _emit(
+        'exit',
+        'CLOSED ${p.symbol} ${p.short ? 'short' : 'long'} — $reason',
+        symbol: p.symbol,
+      );
+      return true;
     } catch (e) {
       _emit('error', 'failed to close ${p.symbol}: $e');
+      return false;
     }
+  }
+
+  ScalePlan _planFor(AccountInfo account, DateTime now) {
+    return scalePlan(
+      account: account,
+      settings: settings,
+      dayTradeCount: _dayTradeCount(account, now),
+    );
+  }
+
+  int _dayTradeCount(AccountInfo account, DateTime now) {
+    if (broker is PaperBroker) {
+      final fills = (broker as PaperBroker).fills;
+      return estimatePaperPdt(
+        fills: [
+          for (final f in fills)
+            (symbol: f.symbol, time: f.time, isBuy: f.side == OrderSide.buy),
+        ],
+        equity: dayStartEquityOf(account),
+        now: now,
+      ).dayTradeCount;
+    }
+    return account.dayTradeCount;
   }
 
   Future<void> _tryEnter(
     SignalScore sig,
     AccountInfo account,
     List<Position> positions,
-    DateTime now,
-  ) async {
+    DateTime now, {
+    double? sizingEquity,
+    double? riskPerTradePct,
+    Stance? side,
+    String? newsNote,
+  }) async {
+    final entrySide = side ?? sig.stance;
     final atr = _atrFromSignal(sig);
     final verdict = risk.entry(
       account: account,
       positions: positions,
       price: sig.price,
       atr: atr,
-      stance: sig.stance,
+      stance: entrySide,
       confidence: sig.confidence,
       day: now,
+      sizingEquity: sizingEquity,
+      riskPerTradePct: riskPerTradePct,
     );
     if (!verdict.allowed) {
       _emit('info', 'skip ${sig.symbol}: ${verdict.haltReason}');
@@ -377,18 +1025,58 @@ class TraderEngine {
     // Prefer ensemble ATR-based stops when present.
     final stopPx = sig.suggestedStop ?? verdict.stopPrice;
     final targetPx = sig.suggestedTarget ?? verdict.targetPrice;
+    final quote = _quotes[sig.symbol.toUpperCase()];
+    final spreadSkip = spreadSkipReason(
+      quote: quote,
+      price: sig.price,
+      targetPrice: targetPx,
+      maxSpreadOfTarget: settings.risk.maxSpreadOfTarget,
+    );
+    if (spreadSkip != null) {
+      _noteOnce(now, 'skip ${sig.symbol}: $spreadSkip', notedDay: true);
+      return;
+    }
+
+    final regular = isMarketOpen(now);
+    final orderSide =
+        entrySide == Stance.long ? OrderSide.buy : OrderSide.sell;
+    final isLive = broker.mode == BrokerMode.live;
+    final request = sessionOrder(
+      symbol: sig.symbol,
+      side: orderSide,
+      qty: qty,
+      regularSession: regular,
+      quote: quote,
+      allowOutside: _allowLimitOutside(now),
+      extendedHours: settings.extendedHours && isExtendedSession(now),
+      takeProfit: isLive && regular && !settings.risk.letWinnersRun
+          ? targetPx
+          : null,
+      stopLoss: isLive && regular ? stopPx : null,
+    );
+    if (request == null) {
+      _noteOnce(
+        now,
+        'No market order for ${sig.symbol}. The regular session is closed, '
+            'and there was no bid/ask for a limit.',
+        notedDay: true,
+      );
+      return;
+    }
 
     try {
-      final isLive = broker.mode == BrokerMode.live;
-      final order = await broker.submitOrder(OrderRequest(
-        symbol: sig.symbol,
-        side: sig.stance == Stance.long ? OrderSide.buy : OrderSide.sell,
-        type: OrderType.market,
-        qty: qty,
-        takeProfit: isLive ? targetPx : null,
-        stopLoss: isLive ? stopPx : null,
-        extendedHours: settings.extendedHours,
-      ));
+      final order = await broker.submitOrder(request);
+      if (request.type == OrderType.limit &&
+          order.filledQty <= 0 &&
+          broker is PaperBroker) {
+        _noteOnce(
+          now,
+          '${sig.symbol}: limit at \$${request.limitPrice!.toStringAsFixed(2)} '
+              'was not filled. No market order was sent.',
+          notedDay: true,
+        );
+        return;
+      }
 
       // Anchor management state at entry.
       final entryAtr = atr ?? sig.price * 0.01;
@@ -399,11 +1087,15 @@ class TraderEngine {
         peak: sig.price,
       );
 
+      final priceNote = request.type == OrderType.limit
+          ? 'limit \$${request.limitPrice!.toStringAsFixed(2)}'
+          : '~\$${sig.price.toStringAsFixed(2)}';
       _emit('trade',
-          '${sig.stance == Stance.long ? 'BOUGHT' : 'SHORTED'} ${qty.toStringAsFixed(0)} '
-          '${sig.symbol} @ ~\$${sig.price.toStringAsFixed(2)} · score ${sig.scorePct} '
+          '${entrySide == Stance.long ? 'BOUGHT' : 'SHORTED'} ${qty.toStringAsFixed(0)} '
+          '${sig.symbol} @ $priceNote · score ${sig.scorePct} '
           'conf ${(sig.confidence * 100).round()}% · stop \$${stopPx?.toStringAsFixed(2)} '
-          'target \$${targetPx?.toStringAsFixed(2)}',
+          'target \$${targetPx?.toStringAsFixed(2)}'
+          '${newsNote == null ? '' : ' · $newsNote'}',
           signal: sig,
           symbol: sig.symbol);
 
@@ -458,15 +1150,6 @@ class TraderEngine {
     }
     _emit('info',
         'order for $symbol still pending after 30s — will keep checking next cycles');
-  }
-
-  Future<T?> _safe<T>(Future<T> Function() fn) async {
-    try {
-      return await fn();
-    } catch (e) {
-      _emit('error', '$e');
-      return null;
-    }
   }
 
   void dispose() {

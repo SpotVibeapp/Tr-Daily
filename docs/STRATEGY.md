@@ -5,6 +5,8 @@ claims.
 
 ## 1. Inputs
 
+The auto-trader checks the watchlist every pass and also walks listed US stocks and ETFs, a slice at a time. A name does not have to be on the watchlist to be traded. OTC names are not included. It does not chart the entire market in one minute.
+
 Per symbol, on the configured interval (default 5-minute bars):
 
 - **EMA 9/21** trend posture and spread
@@ -20,6 +22,11 @@ Per symbol, on the configured interval (default 5-minute bars):
   clustered support/resistance, least-squares trendlines (R²-qualified)
 - **Candlestick patterns**: engulfing, hammer/star, pins, inside bars, strong
   directional bars
+- **News**: company headlines and a world-news feed, reviewed on every scan.
+  A severe recent company story can block or close that name. A feed failure
+  skips new trades in names that could not be checked. Developing stories are
+  listed, not treated as a forecast. Headlines can be late or wrong. This does
+  not remove the risk of a loss.
 
 ## 2. Scoring
 
@@ -60,6 +67,9 @@ confidence = 0.45·trendQuality + 0.30·|signal avg| + 0.15·ADX gate + ML certa
 | Max position | 25% of equity | Single-name cap |
 | **Max daily loss** | **2%** | **Engine halts until next session** |
 | Min confidence | 35% | No low-conviction entries |
+| Fit to cash | on | Skip a name when 1 share exceeds 25% of equity or buying power. If the watchlist does not fit, scan listed names, preferring ≤ $5. Not OTC, not fractional shares of the big names. |
+| Day-trade edge | on, 1% target | Skip a setup whose target is under 1% of the share price, or whose forced 1-share size risks more than 2.5× the risk-per-trade setting. Flatten in the last 15 minutes so a day trade is not held overnight. Not a profit guarantee. |
+| Scale with balance | on | Size from the session's starting equity, not the intraday mark. Under $2,000: small-account range, no shorts. From $2,000 to $25,000: step up, and still scan lower-priced names. At $25,000: full day trading (no PDT entry cap). A strong target may use up to 2× the risk setting. Not a profit guarantee. Options are not traded. |
 
 ## 5. Exit logic
 
@@ -81,7 +91,11 @@ never overwrite them — a stop sits where the thesis was invalidated, not
 US pattern-day-trader rule: 4+ round trips in 5 business days without $25k
 equity. The dashboard shows a warning at 3 and a restriction banner at 4
 (broker-reported for live accounts, estimated from the paper fill log).
-Tr-Daily warns — the broker enforces.
+Tr-Daily warns — the broker enforces. With scale-with-balance on, a new
+entry that would be a 4th day trade is also skipped when today's starting
+equity is under $25,000. At $25,000 and above that limit is not applied.
+That is not a promise the broker will accept the order, and not a promise
+of profit.
 
 ## 6. Execution realism
 
@@ -89,8 +103,13 @@ Tr-Daily warns — the broker enforces.
   intrabar stops checked against high/low, same-bar stop+target → stop first,
   gap-through-stop fills at the worse open, slippage on every fill.
 - **Paper broker:** instant fills at last price ± slippage, no margin.
-- **Live:** market orders to Alpaca (raw fills, real spreads/latency — usually
-  *worse* than simulation).
+- **Live:** market orders to Alpaca during the regular session (raw fills, real
+  spreads/latency — usually *worse* than simulation). A new trade is skipped
+  when the bid-ask spread is 25% or more of the profit-point distance, or when
+  the quote cannot be read. Outside the regular session the app does not send
+  a market order. An extended-hours order is a limit at the bid or ask, or it
+  is not sent. Demo prices and a bar older than three intervals do not open a
+  trade. A name with an order already working does not get a second order.
 
 ## 7. What this is NOT
 

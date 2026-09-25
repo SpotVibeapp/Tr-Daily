@@ -187,10 +187,10 @@ class AlpacaBroker implements Broker {
       'notional': request.notional == null ? null : _numStr(request.notional!),
     }..removeWhere((k, v) => v == null);
     if (request.limitPrice != null) {
-      body['limit_price'] = request.limitPrice!.toStringAsFixed(2);
+      body['limit_price'] = _orderPrice(request.limitPrice!);
     }
     if (request.stopPrice != null) {
-      body['stop_price'] = request.stopPrice!.toStringAsFixed(2);
+      body['stop_price'] = _orderPrice(request.stopPrice!);
     }
     if (request.clientOrderId != null) {
       body['client_order_id'] = request.clientOrderId;
@@ -198,14 +198,20 @@ class AlpacaBroker implements Broker {
     if (request.extendedHours) {
       body['extended_hours'] = true;
     }
-    // Bracket orders: native stop/target handling at the broker.
+    // Bracket caps the trade at the profit point. OTO keeps the stop and
+    // leaves further profit to the engine trail.
     if (request.takeProfit != null && request.stopLoss != null) {
       body['order_class'] = 'bracket';
       body['take_profit'] = <String, dynamic>{
-        'limit_price': request.takeProfit!.toStringAsFixed(2),
+        'limit_price': _orderPrice(request.takeProfit!),
       };
       body['stop_loss'] = <String, dynamic>{
-        'stop_price': request.stopLoss!.toStringAsFixed(2),
+        'stop_price': _orderPrice(request.stopLoss!),
+      };
+    } else if (request.stopLoss != null) {
+      body['order_class'] = 'oto';
+      body['stop_loss'] = <String, dynamic>{
+        'stop_price': _orderPrice(request.stopLoss!),
       };
     }
     final raw = await _req('POST', '/v2/orders', body: body);
@@ -266,4 +272,8 @@ class AlpacaBroker implements Broker {
   /// Alpaca wants whole share counts as integers ('10', not '10.0').
   static String _numStr(double v) =>
       v == v.truncateToDouble() ? v.toStringAsFixed(0) : '$v';
+
+  /// Sub-dollar names need four decimals or a one-cent spread is rounded away.
+  static String _orderPrice(double v) =>
+      v >= 1 ? v.toStringAsFixed(2) : v.toStringAsFixed(4);
 }

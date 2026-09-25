@@ -34,6 +34,66 @@ void main() {
       expect(isMarketOpen(open.subtract(const Duration(hours: 6))), isFalse); // 4:30
     });
 
+    test('flatten window is the last 15 minutes before 16:00 ET', () {
+      // Wed 2026-06-10 15:50 ET = 19:50 UTC (EDT). 10 minutes left.
+      final late = DateTime.utc(2026, 6, 10, 19, 50);
+      expect(minutesUntilClose(late), 10);
+      expect(inFlattenWindow(late), isTrue);
+      // 15:00 ET = 19:00 UTC. 60 minutes left.
+      final mid = DateTime.utc(2026, 6, 10, 19, 0);
+      expect(inFlattenWindow(mid), isFalse);
+      // 16:05 ET is after the close, not a flatten window.
+      final after = DateTime.utc(2026, 6, 10, 20, 5);
+      expect(inFlattenWindow(after), isFalse);
+    });
+
+    test('extended session is 4:00–20:00 ET, not overnight', () {
+      // Wed 2026-06-10. EDT is UTC-4.
+      final pre = DateTime.utc(2026, 6, 10, 12); // 08:00 ET
+      final after = DateTime.utc(2026, 6, 10, 21); // 17:00 ET
+      final night = DateTime.utc(2026, 6, 11, 1); // 21:00 ET
+      expect(isMarketOpen(pre), isFalse);
+      expect(isExtendedSession(pre), isTrue);
+      expect(isAfterHours(after), isTrue);
+      expect(isExtendedSession(night), isFalse);
+      expect(
+        canOpenNewTrade(
+          force: false,
+          sessionOpen: false,
+          extendedHoursEnabled: true,
+          extendedSession: true,
+          tradeWhileClosed: false,
+          liveBroker: true,
+          halted: false,
+        ),
+        isTrue,
+      );
+      expect(
+        canOpenNewTrade(
+          force: false,
+          sessionOpen: false,
+          extendedHoursEnabled: false,
+          extendedSession: false,
+          tradeWhileClosed: true,
+          liveBroker: true,
+          halted: false,
+        ),
+        isFalse,
+      );
+      expect(
+        canOpenNewTrade(
+          force: false,
+          sessionOpen: true,
+          extendedHoursEnabled: false,
+          extendedSession: true,
+          tradeWhileClosed: false,
+          liveBroker: false,
+          halted: true,
+        ),
+        isFalse,
+      );
+    });
+
     test('closed on weekends', () {
       expect(isMarketOpen(DateTime.utc(2026, 6, 13, 15)), isFalse); // Sat
       expect(isMarketOpen(DateTime.utc(2026, 6, 14, 15)), isFalse); // Sun

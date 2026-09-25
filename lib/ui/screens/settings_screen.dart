@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../../broker/alpaca_broker.dart';
 import '../../broker/paper_broker.dart';
 import '../../core/config.dart';
+import '../../engine/scale.dart';
 import '../../data/models.dart';
+import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import 'home_shell.dart';
@@ -25,6 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _webhookUrl;
   late TextEditingController _telegramBotToken;
   late TextEditingController _telegramChatId;
+  late TextEditingController _paperCash;
   bool _obscureSecret = true;
   bool _saving = false;
 
@@ -38,6 +41,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _webhookUrl = TextEditingController(text: s.notifications.webhookUrl);
     _telegramBotToken = TextEditingController(text: s.notifications.telegramBotToken);
     _telegramChatId = TextEditingController(text: s.notifications.telegramChatId);
+    _paperCash = TextEditingController(
+      text: s.paperStartingCash.toStringAsFixed(0),
+    );
   }
 
   @override
@@ -48,7 +54,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _webhookUrl.dispose();
     _telegramBotToken.dispose();
     _telegramChatId.dispose();
+    _paperCash.dispose();
     super.dispose();
+  }
+
+  void _applyPaperCash() {
+    final parsed = double.tryParse(
+      _paperCash.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+    );
+    if (parsed == null || parsed < 10) return;
+    widget.state.settings.paperStartingCash = parsed;
   }
 
   Future<void> _save({bool silent = false}) async {
@@ -99,7 +114,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Text(
               'Live mode routes REAL orders to your funded brokerage account. '
               'Automated trading can lose money — rapidly. Tr-Daily has no way '
-              'to guarantee profits.',
+              'to guarantee profits. If the engine is on, closing the app does '
+              'not stop live orders. Turn the engine off, or tap Stop on the '
+              'notification, to stop. A daily loss stop can halt the rest of '
+              'the day. A profit goal does not.',
               style: TextStyle(color: TrTheme.textMuted, fontSize: 13),
             ),
             SizedBox(height: 12),
@@ -253,7 +271,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       decoration: const InputDecoration(
                         labelText: 'Data provider',
                         helperText:
-                            'auto = Yahoo → bundled sample → synthetic fallback',
+                            'auto = Alpaca when keys are saved, then Yahoo, bundled sample, synthetic',
                       ),
                       items: const [
                         DropdownMenuItem(
@@ -304,6 +322,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    _switchRow(
+                      'Scan the listed market',
+                      'The watchlist is not a lock. Each pass charts the watchlist '
+                          'plus the next listed US stocks and ETFs. A phone cannot '
+                          'chart every name in one minute. OTC names are not included. '
+                          'This does not guarantee a profit.',
+                      s.scanListedMarket,
+                      (v) {
+                        setState(() => s.scanListedMarket = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Names here are checked every pass. Add a symbol you want watched even before the market walk reaches it.',
+                      style: TextStyle(
+                        color: TrTheme.textMuted,
+                        fontSize: 11.5,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -365,6 +405,168 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
+              _sectionTitle('FIT TO CASH'),
+              _card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _switchRow(
+                      'Adapt to available cash',
+                      'Skip a name when one share costs more than this account '
+                          'can buy. If nothing on the watchlist fits, scan listed '
+                          'stocks that do — preferring about \$5 and under. Not '
+                          'OTC penny stocks, and not a fraction of AAPL.',
+                      s.fitToBudget,
+                      (v) {
+                        setState(() => s.fitToBudget = v);
+                        if (!v) widget.state.budget.clear();
+                        _save(silent: true);
+                      },
+                    ),
+                    if (s.fitToBudget) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _budgetCaption(st, s),
+                        style: const TextStyle(
+                          color: TrTheme.textMuted,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _sliderRow(
+                        'Prefer stocks at or under',
+                        '\$${s.budgetShareCeiling.toStringAsFixed(0)}',
+                        s.budgetShareCeiling.clamp(1, 20).toDouble(),
+                        1,
+                        20,
+                        (v) {
+                          setState(() => s.budgetShareCeiling = v.roundToDouble());
+                        },
+                        () => _save(silent: true),
+                      ),
+                      const Text(
+                        'Used when the watchlist itself does not fit. If no listed '
+                        'name is under that price, the engine uses the next '
+                        'names one share can still buy. With scaling on, a '
+                        'larger account still scans some lower-priced names '
+                        'and does not drop the watchlist.',
+                        style: TextStyle(
+                          color: TrTheme.textMuted,
+                          fontSize: 11.5,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
+              _sectionTitle('SCALE WITH BALANCE'),
+              _card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _scaleCaption(st, s),
+                      style: const TextStyle(
+                        color: TrTheme.textMuted,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _switchRow(
+                      'Scale with today\'s starting balance',
+                      'Position size and the day-trade limit follow the equity '
+                          'the session started with. A gain or a setback changes '
+                          'the next session, not the middle of a trade. At '
+                          '\$25,000 and above, full day trading is available. '
+                          'Below that, a 4th day trade in 5 business days is '
+                          'skipped. Lower-priced names stay in the scan once '
+                          'the account can also afford larger ones. This does '
+                          'not guarantee a profit.',
+                      s.scaleWithBalance,
+                      (v) {
+                        setState(() => s.scaleWithBalance = v);
+                        widget.state.budget.clear();
+                        _save(silent: true);
+                      },
+                    ),
+                    _switchRow(
+                      'Allow a larger size on a strong setup',
+                      'A target at least 2× the minimum, with higher confidence, '
+                          'may risk up to 2× the risk-per-trade setting. Quiet '
+                          'setups stay at the normal size. Still capped by the '
+                          'one-share limit and buying power.',
+                      s.allowConvictionRisk,
+                      (v) {
+                        setState(() => s.allowConvictionRisk = v);
+                        _save(silent: true);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
+              _sectionTitle('DAY TRADE'),
+              _card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _switchRow(
+                      'Only take trades with room to move',
+                      'Skip a setup when the target is too small a percent of '
+                          'the share price, or when one share would risk more '
+                          'than the risk setting allows. A quiet name is not '
+                          'forced just because it fits the cash cap. This does '
+                          'not guarantee a profit.',
+                      s.dayTradeEdge,
+                      (v) {
+                        setState(() => s.dayTradeEdge = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    if (s.dayTradeEdge)
+                      _sliderRow(
+                        'Minimum target',
+                        '${s.minTargetPct.toStringAsFixed(1)}% of the share price',
+                        s.minTargetPct.clamp(0.4, 3.0).toDouble(),
+                        0.4,
+                        3.0,
+                        (v) {
+                          setState(() => s.minTargetPct =
+                              (v * 10).roundToDouble() / 10);
+                        },
+                        () => _save(silent: true),
+                      ),
+                    _switchRow(
+                      'Allow overnight holds',
+                      'Off by default. Leaves a position open past the close. '
+                          'This is not a long-term system, and the app does not '
+                          'trade options.',
+                      s.allowOvernightHolds,
+                      (v) {
+                        setState(() => s.allowOvernightHolds = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    _switchRow(
+                      'Flatten before the close',
+                      'Sell open positions in the last 15 minutes of the '
+                          'session so a day trade does not become an overnight '
+                          'hold. The app or the cloud server has to be running '
+                          'then.',
+                      s.flattenBeforeClose,
+                      (v) {
+                        setState(() => s.flattenBeforeClose = v);
+                        _save(silent: true);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
               _sectionTitle('ENGINE'),
               _card(
                 child: Column(
@@ -379,8 +581,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       },
                     ),
                     _switchRow(
+                      'Review news before every trade',
+                      'Reads company headlines and world news on each scan, including after you close the app. A severe story can block or close that name. A developing story is listed before the chart confirms. Feeds can be late, missing, or wrong. This does not remove the risk of a loss.',
+                      s.useNews,
+                      (v) {
+                        setState(() => s.useNews = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    _switchRow(
+                      'Keep running when closed',
+                      'Paper and live. Android keeps scanning and can keep sending orders if you leave or swipe the app away. It stops only if you turn the engine off, tap Stop on the notification, Force Stop the app, or the phone is off. A daily loss stop can halt new trades for the rest of that day.',
+                      s.keepRunningWhenClosed,
+                      (v) {
+                        setState(() => s.keepRunningWhenClosed = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    _switchRow(
                       'Extended-hours trading',
-                      'Route orders 4am–8pm ET (Alpaca; market orders only)',
+                      'From 4:00 a.m. to 8:00 p.m. ET a new trade is a limit at the bid or ask, not a market order. If the quote is missing, or the spread is too wide, the order is not sent. Alpaca may still reject it.',
                       s.extendedHours,
                       (v) {
                         setState(() => s.extendedHours = v);
@@ -389,7 +609,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     _switchRow(
                       'Trade while market closed',
-                      'Paper only — evaluate setups outside 9:30–16:00 ET',
+                      'Paper only. Still not a market order. A limit is used when a bid and ask exist. Live does not invent fills outside the session.',
                       s.tradeWhileClosed,
                       (v) {
                         setState(() => s.tradeWhileClosed = v);
@@ -434,7 +654,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _sectionTitle('RISK MANAGEMENT'),
               _card(
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    const Text(
+                      'Stop and profit points are customizable. They follow volatility (ATR), not a fixed percent. A new trade is skipped when the bid-ask spread is a large part of the profit point, or when that quote cannot be read. Set the spread gate to Off only if you accept that risk. Outside the regular session the app does not send a market order. The daily goal is a milestone, not a cap and not a promise. Reaching it does not stop scanning or refuse more profit, and it does not increase size to chase it. The loss stop does halt the day.',
+                      style: TextStyle(
+                        color: TrTheme.textMuted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     _sliderRow(
                       'Risk per trade',
                       '${s.risk.riskPerTradePct.toStringAsFixed(2)}% of equity',
@@ -448,11 +678,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       () => _save(silent: true),
                     ),
                     _sliderRow(
-                      'Max daily loss',
-                      'Halt at -${s.risk.maxDailyLossPct.toStringAsFixed(1)}%/day',
+                      'Daily profit goal',
+                      s.risk.dailyProfitGoalPct <= 0
+                          ? 'Off'
+                          : '${s.risk.dailyProfitGoalPct.toStringAsFixed(0)}%',
+                      s.risk.dailyProfitGoalPct,
+                      0,
+                      100,
+                      (v) {
+                        setState(() => s.risk = s.risk.copyWith(
+                            dailyProfitGoalPct: v.roundToDouble()));
+                      },
+                      () => _save(silent: true),
+                    ),
+                    _sliderRow(
+                      'Daily loss stop',
+                      'Halt at -${s.risk.maxDailyLossPct.toStringAsFixed(1)}%',
                       s.risk.maxDailyLossPct,
                       0.5,
-                      10.0,
+                      30.0,
                       (v) {
                         setState(
                             () => s.risk = s.risk.copyWith(maxDailyLossPct: v));
@@ -484,7 +728,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       () => _save(silent: true),
                     ),
                     _sliderRow(
-                      'Take profit',
+                      'Profit point',
                       '${s.risk.takeProfitAtrMult.toStringAsFixed(1)} × ATR',
                       s.risk.takeProfitAtrMult,
                       1.0,
@@ -494,6 +738,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             s.risk = s.risk.copyWith(takeProfitAtrMult: v));
                       },
                       () => _save(silent: true),
+                    ),
+                    _sliderRow(
+                      'Spread gate',
+                      s.risk.maxSpreadOfTarget <= 0
+                          ? 'Off'
+                          : 'Skip at ${(s.risk.maxSpreadOfTarget * 100).round()}%',
+                      (s.risk.maxSpreadOfTarget * 100).clamp(0, 50).toDouble(),
+                      0,
+                      50,
+                      (v) {
+                        setState(() => s.risk = s.risk.copyWith(
+                            maxSpreadOfTarget: v.roundToDouble() / 100));
+                      },
+                      () => _save(silent: true),
+                    ),
+                    _switchRow(
+                      'Let winners run past the profit point',
+                      'Off sells the whole trade at the profit point. On locks a stop there so a further move can stay open. The daily goal is not a cap either way.',
+                      s.risk.letWinnersRun,
+                      (v) {
+                        setState(() => s.risk = s.risk.copyWith(letWinnersRun: v));
+                        _save(silent: true);
+                      },
                     ),
                     _sliderRow(
                       'Trailing stop',
@@ -723,10 +990,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           color: TrTheme.textMuted, fontSize: 12.5),
                     ),
                     const SizedBox(height: 8),
+                    TextField(
+                      controller: _paperCash,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Paper cash',
+                        helperText:
+                            'Local simulator only. Alpaca funds are not changed. Live mode must be off.',
+                      ),
+                      onEditingComplete: _applyPaperCash,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final amount in <double>[
+                          100,
+                          500,
+                          1000,
+                          2500,
+                          5000,
+                          10000,
+                          25000,
+                          50000,
+                        ])
+                          ActionChip(
+                            label: Text('\$${amount.toStringAsFixed(0)}'),
+                            onPressed: () {
+                              _paperCash.text = amount.toStringAsFixed(0);
+                              _setPaperCash(amount);
+                            },
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.icon(
+                      onPressed: () {
+                        final parsed = double.tryParse(
+                          _paperCash.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+                        );
+                        if (parsed == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Enter a paper cash amount first.'),
+                            ),
+                          );
+                          return;
+                        }
+                        _setPaperCash(parsed);
+                      },
+                      icon: const Icon(Icons.account_balance_wallet, size: 16),
+                      label: const Text('Set paper cash'),
+                    ),
+                    const SizedBox(height: 8),
                     OutlinedButton.icon(
                       onPressed: () => _confirmReset(),
                       icon: const Icon(Icons.restart_alt, size: 16),
                       label: const Text('Reset paper account'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _previewSmallAccount,
+                      icon: const Icon(Icons.savings_outlined, size: 16),
+                      label: const Text('Preview with \$100 paper cash'),
                     ),
                   ],
                 ),
@@ -739,7 +1068,134 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  String _scaleCaption(AppState st, AppSettings s) {
+    if (!s.scaleWithBalance) {
+      return 'Scaling is off. Size uses the current equity, and a large '
+          'balance does not add lower-priced names.';
+    }
+    final plan = scalePlan(
+      account: st.account,
+      settings: s,
+      dayTradeCount: 0,
+    );
+    return plan.summary;
+  }
+
+  String _budgetCaption(AppState st, AppSettings s) {
+    final maxPx = maxAffordableSharePrice(
+      st.account,
+      s.risk,
+      sizingEquity: s.scaleWithBalance ? dayStartEquityOf(st.account) : null,
+    );
+    final ceiling = s.budgetShareCeiling <= 0 ? 5.0 : s.budgetShareCeiling;
+    if (st.account.equity <= 0 && st.account.buyingPower <= 0) {
+      return 'Connect an account or start paper trading to see the share-price cap.';
+    }
+    return 'Right now one new share can cost up to ${TrTheme.money(maxPx)} '
+        '(${s.risk.maxPositionPct.round()}% of today\'s start, or buying power '
+        'if that is lower). Backup names prefer ${TrTheme.money(ceiling)} and '
+        'under. Set paper cash to try \$100, \$1,000, or \$25,000. A larger '
+        'balance still scans some lower-priced names when scaling is on.';
+  }
+
+  Future<void> _setPaperCash(double amount) async {
+    if (amount < 10) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter at least \$10 of paper cash.')),
+      );
+      return;
+    }
+    if (widget.state.settings.liveTrading) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Live mode is on. Switch to paper before changing test cash.',
+          ),
+        ),
+      );
+      return;
+    }
+    final shown = amount.toStringAsFixed(0);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: TrTheme.surface,
+        title: Text('Set paper cash to \$$shown?'),
+        content: Text(
+          'Replaces the local simulator with \$$shown and clears its positions. '
+          'Alpaca funds are not changed. The next scan sizes from this balance. '
+          'This does not guarantee a profit.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Use \$$shown'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    widget.state.settings.paperStartingCash = amount;
+    widget.state.settings.useLocalPaper = true;
+    _paperCash.text = shown;
+    widget.state.budget.clear();
+    await _save(silent: true);
+    await widget.state.resetPaperAccount();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Paper account is \$$shown.')),
+    );
+  }
+
+  Future<void> _previewSmallAccount() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: TrTheme.surface,
+        title: const Text('Preview a \$100 account?'),
+        content: const Text(
+          'Replaces the simulated paper account with \$100 cash so you can see '
+          'which names fit. Live Alpaca funds are not touched. Any open paper '
+          'positions are cleared.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Use \$100'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    widget.state.settings.paperStartingCash = 100;
+    widget.state.settings.fitToBudget = true;
+    _paperCash.text = '100';
+    widget.state.budget.clear();
+    await _save(silent: true);
+    await widget.state.resetPaperAccount();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Paper account is \$100. Names over about \$25 are skipped.',
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmReset() async {
+    _applyPaperCash();
+    await _save(silent: true);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -797,13 +1253,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     bool value,
     ValueChanged<bool> onChanged,
   ) =>
-      SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text(title, style: const TextStyle(fontSize: 14)),
-        subtitle: Text(subtitle,
-            style: const TextStyle(color: TrTheme.textMuted, fontSize: 11.5)),
-        value: value,
-        onChanged: onChanged,
+      Material(
+        type: MaterialType.transparency,
+        child: SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(title, style: const TextStyle(fontSize: 14)),
+          subtitle: Text(subtitle,
+              style: const TextStyle(color: TrTheme.textMuted, fontSize: 11.5)),
+          value: value,
+          onChanged: onChanged,
+        ),
       );
 
   Widget _sliderRow(

@@ -7,6 +7,9 @@ class RiskConfig {
     this.maxOpenPositions = 3,
     this.maxExposurePct = 60,
     this.maxDailyLossPct = 2.0,
+    this.dailyProfitGoalPct = 30.0,
+    this.letWinnersRun = false,
+    this.maxSpreadOfTarget = 0.25,
     this.stopLossAtrMult = 1.5,
     this.takeProfitAtrMult = 2.5,
     this.minConfidenceToTrade = 0.35,
@@ -30,6 +33,18 @@ class RiskConfig {
 
   /// Halt for the day after losing this % of equity.
   final double maxDailyLossPct;
+
+  /// A daily profit milestone. Reaching it does not halt, size up, or refuse
+  /// a later gain. 0 disables the milestone.
+  final double dailyProfitGoalPct;
+
+  /// When true, the profit point locks a stop instead of selling the whole
+  /// trade, so a further move can stay open.
+  final bool letWinnersRun;
+
+  /// Skip a new trade when the bid-ask spread is at least this fraction of
+  /// the profit-point distance. 0 disables the gate.
+  final double maxSpreadOfTarget;
 
   final double stopLossAtrMult;
   final double takeProfitAtrMult;
@@ -58,6 +73,9 @@ class RiskConfig {
         'maxOpenPositions': maxOpenPositions,
         'maxExposurePct': maxExposurePct,
         'maxDailyLossPct': maxDailyLossPct,
+        'dailyProfitGoalPct': dailyProfitGoalPct,
+        'letWinnersRun': letWinnersRun,
+        'maxSpreadOfTarget': maxSpreadOfTarget,
         'stopLossAtrMult': stopLossAtrMult,
         'takeProfitAtrMult': takeProfitAtrMult,
         'minConfidenceToTrade': minConfidenceToTrade,
@@ -82,6 +100,11 @@ class RiskConfig {
           (json['maxExposurePct'] as num?)?.toDouble() ?? d.maxExposurePct,
       maxDailyLossPct:
           (json['maxDailyLossPct'] as num?)?.toDouble() ?? d.maxDailyLossPct,
+      dailyProfitGoalPct: (json['dailyProfitGoalPct'] as num?)?.toDouble() ??
+          d.dailyProfitGoalPct,
+      letWinnersRun: json['letWinnersRun'] as bool? ?? d.letWinnersRun,
+      maxSpreadOfTarget: (json['maxSpreadOfTarget'] as num?)?.toDouble() ??
+          d.maxSpreadOfTarget,
       stopLossAtrMult:
           (json['stopLossAtrMult'] as num?)?.toDouble() ?? d.stopLossAtrMult,
       takeProfitAtrMult:
@@ -114,6 +137,9 @@ class RiskConfig {
     int? maxOpenPositions,
     double? maxExposurePct,
     double? maxDailyLossPct,
+    double? dailyProfitGoalPct,
+    bool? letWinnersRun,
+    double? maxSpreadOfTarget,
     double? stopLossAtrMult,
     double? takeProfitAtrMult,
     double? minConfidenceToTrade,
@@ -131,6 +157,9 @@ class RiskConfig {
         maxOpenPositions: maxOpenPositions ?? this.maxOpenPositions,
         maxExposurePct: maxExposurePct ?? this.maxExposurePct,
         maxDailyLossPct: maxDailyLossPct ?? this.maxDailyLossPct,
+        dailyProfitGoalPct: dailyProfitGoalPct ?? this.dailyProfitGoalPct,
+        letWinnersRun: letWinnersRun ?? this.letWinnersRun,
+        maxSpreadOfTarget: maxSpreadOfTarget ?? this.maxSpreadOfTarget,
         stopLossAtrMult: stopLossAtrMult ?? this.stopLossAtrMult,
         takeProfitAtrMult: takeProfitAtrMult ?? this.takeProfitAtrMult,
         minConfidenceToTrade: minConfidenceToTrade ?? this.minConfidenceToTrade,
@@ -164,6 +193,27 @@ class RiskVerdict {
   final double? suggestedQty;
   final double? stopPrice;
   final double? targetPrice;
+}
+
+/// Highest price at which one whole share still fits the single-position
+/// cap and the broker's buying power. Zero means "do not open a new share".
+///
+/// Buying power of zero is not replaced with equity — a broker that reports
+/// no buying power will reject the order, and sizing as if it wouldn't is
+/// how a small account gets a surprise rejection (or, worse, a size the
+/// cash cannot cover).
+double maxAffordableSharePrice(
+  AccountInfo account,
+  RiskConfig config, {
+  double? sizingEquity,
+}) {
+  final equity = (sizingEquity != null && sizingEquity > 0)
+      ? sizingEquity
+      : (account.equity <= 0 ? account.cash : account.equity);
+  if (equity <= 0 || config.maxPositionPct <= 0) return 0;
+  if (account.buyingPower <= 0) return 0;
+  final byPosition = equity * config.maxPositionPct / 100;
+  return byPosition < account.buyingPower ? byPosition : account.buyingPower;
 }
 
 /// Position sizing (volatility-aware), exposure caps and the daily-loss
@@ -216,6 +266,8 @@ class RiskManager {
     required Stance stance,
     required double confidence,
     required DateTime day,
+    double? sizingEquity,
+    double? riskPerTradePct,
   }) {
     checkNewDay(day);
     if (_haltedToday) {
@@ -244,6 +296,24 @@ class RiskManager {
           'max exposure reached (${config.maxExposurePct.round()}%)');
     }
 
+    // Same gate as the 1-share fallback below, but with a reason a person
+    // can act on: the name is too expensive for this account, not "qty <= 0".
+    final maxShare = maxAffordableSharePrice(
+      account,
+      config,
+      sizingEquity: sizingEquity,
+    );
+    if (maxShare <= 0) {
+      return RiskVerdict.denied('no buying power for a new share');
+    }
+    if (price > maxShare + 1e-6) {
+      return RiskVerdict.denied(
+        'one share (\$${price.toStringAsFixed(2)}) exceeds budget '
+        '(max \$${maxShare.toStringAsFixed(2)}, '
+        '${config.maxPositionPct.round()}% of equity or buying power)',
+      );
+    }
+
     final a = (atr != null && atr > 0) ? atr : price * 0.01;
     final stopDist = config.stopLossAtrMult * a;
     final stopPrice =
@@ -253,8 +323,11 @@ class RiskManager {
         : price - config.takeProfitAtrMult * a;
 
     // Volatility sizing: risk `riskPerTradePct`% of equity across stop distance.
-    final equity = account.equity <= 0 ? account.cash : account.equity;
-    final riskDollars = equity * config.riskPerTradePct / 100;
+    final equity = (sizingEquity != null && sizingEquity > 0)
+        ? sizingEquity
+        : (account.equity <= 0 ? account.cash : account.equity);
+    final riskPct = riskPerTradePct ?? config.riskPerTradePct;
+    final riskDollars = equity * riskPct / 100;
     var qty = riskDollars / stopDist;
     if (qty <= 0) return RiskVerdict.denied('computed qty <= 0');
 
@@ -287,4 +360,28 @@ class RiskManager {
       targetPrice: targetPrice,
     );
   }
+}
+
+/// True when today's gain has reached the goal. This is a milestone, not a halt.
+bool dailyProfitGoalReached({
+  required double dayPnlPct,
+  required double goalPct,
+}) {
+  if (goalPct <= 0) return false;
+  return dayPnlPct + 1e-9 >= goalPct;
+}
+
+/// Once the planned profit price is reached, move the stop to that price so
+/// the planned gain is locked and a further move can stay open.
+/// Returns null when the stop should not change.
+double? lockedProfitStop({
+  required bool long,
+  required double target,
+  required double currentStop,
+  required bool targetHit,
+  required bool allowMore,
+}) {
+  if (!targetHit || !allowMore) return null;
+  if (long) return target > currentStop ? target : null;
+  return target < currentStop ? target : null;
 }

@@ -174,6 +174,29 @@ void main() {
       expect(body['stop_loss']['stop_price'], '120.00');
     });
 
+    test('stop without a profit cap is an OTO order', () async {
+      client.responseQueue.add(<String, dynamic>{
+        'id': 'ord-oto',
+        'symbol': 'NVDA',
+        'side': 'buy',
+        'type': 'market',
+        'status': 'accepted',
+        'submitted_at': '2026-06-10T14:30:00Z',
+      });
+      await broker.submitOrder(const OrderRequest(
+        symbol: 'NVDA',
+        side: OrderSide.buy,
+        type: OrderType.market,
+        qty: 5,
+        stopLoss: 120.0,
+      ));
+      final body =
+          jsonDecode(client.requests.single.body) as Map<String, dynamic>;
+      expect(body['order_class'], 'oto');
+      expect(body.containsKey('take_profit'), isFalse);
+      expect(body['stop_loss']['stop_price'], '120.00');
+    });
+
     test('extended hours flag included when requested', () async {
       client.responseQueue.add(<String, dynamic>{
         'id': 'ord-3',

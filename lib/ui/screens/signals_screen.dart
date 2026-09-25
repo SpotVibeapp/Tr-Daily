@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
+import '../../engine/day_trade.dart';
+import '../../engine/scale.dart';
+import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -47,6 +50,7 @@ class SignalsScreen extends StatelessWidget {
                   child: Text(
                     'Composite score = chart-trend ensemble'
                         '${state.settings.ensemble.useMl ? ' + online ML' : ''}'
+                        '${state.settings.useNews ? ' + news' : ''}'
                         ' · source ${state.scanner.source.id}',
                     style: const TextStyle(color: TrTheme.textMuted, fontSize: 11.5),
                   ),
@@ -62,6 +66,11 @@ class SignalsScreen extends StatelessWidget {
                 for (final sig in state.signals)
                   _SignalCard(
                     signal: sig,
+                    newsNote: _newsNote(state, sig),
+                    overBudget: _overBudget(state, sig),
+                    tooQuiet: _tooQuiet(state, sig),
+                    minTargetPct: state.settings.minTargetPct,
+                    budgetPick: state.budget.last.sleeve.contains(sig.symbol),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => ChartScreen(state: state, symbol: sig.symbol),
@@ -83,6 +92,31 @@ class SignalsScreen extends StatelessWidget {
   }
 }
 
+String? _newsNote(AppState state, SignalScore sig) {
+  final review = state.engine?.lastNewsReview ?? state.newsReview;
+  return review?.bySymbol[sig.symbol.toUpperCase()]?.note;
+}
+
+bool _overBudget(AppState state, SignalScore sig) {
+  if (!state.settings.fitToBudget) return false;
+  final sizing = state.settings.scaleWithBalance
+      ? dayStartEquityOf(state.account)
+      : null;
+  final maxPx = maxAffordableSharePrice(
+    state.account,
+    state.settings.risk,
+    sizingEquity: sizing,
+  );
+  return maxPx > 0 && sig.price > maxPx + 1e-6;
+}
+
+bool _tooQuiet(AppState state, SignalScore sig) {
+  if (!state.settings.dayTradeEdge || sig.stance == Stance.flat) return false;
+  final pct = targetPctOfPrice(sig);
+  if (pct == null) return false;
+  return pct + 1e-9 < state.settings.minTargetPct;
+}
+
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.state});
 
@@ -102,7 +136,9 @@ class _EmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Tap sync to scan ${state.settings.watchlist.join(', ')}',
+            state.settings.scanListedMarket
+                ? 'Tap sync to scan the watchlist and the next listed names.'
+                : 'Tap sync to scan ${state.settings.watchlist.join(', ')}',
             textAlign: TextAlign.center,
             style: const TextStyle(color: TrTheme.textMuted, fontSize: 13),
           ),
@@ -119,10 +155,23 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _SignalCard extends StatelessWidget {
-  const _SignalCard({required this.signal, required this.onTap});
+  const _SignalCard({
+    required this.signal,
+    required this.onTap,
+    this.overBudget = false,
+    this.tooQuiet = false,
+    this.minTargetPct = 1,
+    this.budgetPick = false,
+    this.newsNote,
+  });
 
   final SignalScore signal;
   final VoidCallback onTap;
+  final bool overBudget;
+  final bool tooQuiet;
+  final double minTargetPct;
+  final bool budgetPick;
+  final String? newsNote;
 
   @override
   Widget build(BuildContext context) {
@@ -170,6 +219,27 @@ class _SignalCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (overBudget) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'Over budget — one share does not fit, so this name is skipped',
+                style: TextStyle(color: TrTheme.warn, fontSize: 11),
+              ),
+            ] else if (tooQuiet) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Too quiet for a day trade — target '
+                '${(targetPctOfPrice(signal) ?? 0).toStringAsFixed(2)}% of price, '
+                'need ${minTargetPct.toStringAsFixed(1)}%',
+                style: const TextStyle(color: TrTheme.warn, fontSize: 11),
+              ),
+            ] else if (budgetPick) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'Fits this account — added because the watchlist was too expensive',
+                style: TextStyle(color: TrTheme.accent, fontSize: 11),
+              ),
+            ],
             const SizedBox(height: 10),
             Row(
               children: [
@@ -220,6 +290,13 @@ class _SignalCard extends StatelessWidget {
                 ],
               ],
             ),
+            if (newsNote != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                newsNote!,
+                style: const TextStyle(color: TrTheme.warn, fontSize: 11.5, height: 1.3),
+              ),
+            ],
             const SizedBox(height: 6),
             Wrap(
               spacing: 6,

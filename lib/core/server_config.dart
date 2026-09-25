@@ -42,6 +42,22 @@ class ServerConfig {
     final maxPositions = int.tryParse(env['MAX_OPEN_POSITIONS'] ?? '5') ?? 5;
     final extendedHours = (env['EXTENDED_HOURS'] ?? 'false').toLowerCase() == 'true';
     final allowShort = (env['ALLOW_SHORT'] ?? 'true').toLowerCase() != 'false';
+    final fitToBudget = (env['FIT_TO_BUDGET'] ?? 'true').toLowerCase() != 'false';
+    final budgetCeiling =
+        double.tryParse(env['BUDGET_SHARE_CEILING'] ?? '5') ?? 5;
+    final dayTradeEdge =
+        (env['DAY_TRADE_EDGE'] ?? 'true').toLowerCase() != 'false';
+    final minTargetPct = double.tryParse(env['MIN_TARGET_PCT'] ?? '1.0') ?? 1.0;
+    final flattenBeforeClose =
+        (env['FLATTEN_BEFORE_CLOSE'] ?? 'true').toLowerCase() != 'false';
+    final scaleWithBalance =
+        (env['SCALE_WITH_BALANCE'] ?? 'true').toLowerCase() != 'false';
+    final allowConvictionRisk =
+        (env['ALLOW_CONVICTION_RISK'] ?? 'true').toLowerCase() != 'false';
+    final allowOvernightHolds =
+        (env['ALLOW_OVERNIGHT_HOLDS'] ?? 'false').toLowerCase() == 'true';
+    final scanListedMarket =
+        (env['SCAN_LISTED_MARKET'] ?? 'true').toLowerCase() != 'false';
 
     final dpStr = (env['DATA_PROVIDER'] ?? 'auto').toLowerCase();
     final dataProvider = switch (dpStr) {
@@ -66,6 +82,15 @@ class ServerConfig {
       scanIntervalSeconds: scanInterval,
       extendedHours: extendedHours,
       allowShort: allowShort,
+      fitToBudget: fitToBudget,
+      budgetShareCeiling: budgetCeiling,
+      dayTradeEdge: dayTradeEdge,
+      minTargetPct: minTargetPct,
+      flattenBeforeClose: flattenBeforeClose,
+      scaleWithBalance: scaleWithBalance,
+      allowConvictionRisk: allowConvictionRisk,
+      allowOvernightHolds: allowOvernightHolds,
+      scanListedMarket: scanListedMarket,
       risk: RiskConfig(
         riskPerTradePct: riskPerTrade,
         maxDailyLossPct: maxDailyLoss,

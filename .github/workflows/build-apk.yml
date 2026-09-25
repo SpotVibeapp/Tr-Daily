@@ -1,0 +1,298 @@
+name: Build APK
+
+# Builds a release APK on a full-internet runner and commits it back to the
+# branch under artifacts/apk/ so it can be picked up in environments without
+# Google egress (e.g. sandboxed dev boxes).
+#
+# Triggers:
+#  - push of a change to THIS file on the target branch (rebuild on change;
+#    the APK-commit step skips re-pushing when bytes are unchanged, so no loop)
+#  - repository_dispatch `build-apk` (only fires once this file is on the
+#    default branch; until then, push a change to this file). Rebuilds the
+#    current release APK: market scanning + portfolio + push combined.
+#  - workflow_dispatch (visible once the file exists on the default branch)
+on:
+  push:
+    branches: [arena/01a0d962-tr-daily]
+    paths: [.github/workflows/build-apk.yml]
+  repository_dispatch:
+    types: [build-apk]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    name: Build release APK (arm64 + universal)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      # Repo ships lib-only on purpose (see .gitignore); generate the
+      # android/ platform folder from the installed SDK's templates.
+      - name: Generate android/ platform folder
+        run: flutter create --platforms android --project-name tr_daily .
+
+      # The app talks to Yahoo Finance, Alpaca, Discord and Telegram over
+      # HTTPS. Flutter templates only guarantee INTERNET in the debug/profile
+      # manifests, so a release APK built from a bare template can fail every
+      # market-data call with SocketException. Declare it in the main manifest
+      # unconditionally and hard-fail if it is not there afterwards.
+      - name: Fix the Android network manifest
+        run: |
+          python3 << 'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+          if "android.permission.INTERNET" not in text:
+              text = text.replace(
+                  "</manifest>",
+                  '    <uses-permission android:name="android.permission.INTERNET"/>\n</manifest>',
+                  1,
+              )
+              manifest.write_text(text)
+              print("Added android.permission.INTERNET to the main manifest.")
+          else:
+              print("INTERNET permission already present in the main manifest.")
+          text = manifest.read_text()
+          if "android.permission.INTERNET" not in text:
+              raise SystemExit("INTERNET permission missing from the main manifest")
+          print(text)
+          PY
+
+      - name: Declare the keep-alive foreground service
+        run: |
+          python3 << 'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+          perms = """
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+          """
+          service = """
+                  <service
+                      android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+                      android:foregroundServiceType="specialUse"
+                      android:stopWithTask="false"
+                      android:exported="false">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="Keeps a user-started paper trading scan running after the app is closed or the screen locks." />
+                  </service>
+          """
+          if "FOREGROUND_SERVICE_SPECIAL_USE" not in text:
+              text = text.replace("<application", perms + "\n    <application", 1)
+          if "flutter_foreground_task.service.ForegroundService" not in text:
+              text = text.replace("</application>", service + "\n    </application>", 1)
+          manifest.write_text(text)
+          print(manifest.read_text())
+          PY
+
+      # Each GitHub runner used to mint a new debug key. Android then refused
+      # the update and left the old app installed. Release builds now use the
+      # keystore in signing/, so the next APK can install over this one.
+      - name: Pin the sideload signing key
+        run: |
+          python3 << 'PY'
+          from pathlib import Path
+          keystore = Path("signing/debug.keystore").resolve()
+          if not keystore.is_file():
+              raise SystemExit(f"missing {keystore}")
+          gradle_files = list(Path("android/app").glob("build.gradle*"))
+          if len(gradle_files) != 1:
+              raise SystemExit(f"expected one app gradle file, found {gradle_files}")
+          path = gradle_files[0]
+          text = path.read_text()
+          store = str(keystore).replace("\\", "/")
+          if path.suffix == ".kts":
+              block = f"""
+              signingConfigs {{
+                  create("sideload") {{
+                      storeFile = file("{store}")
+                      storePassword = "android"
+                      keyAlias = "androiddebugkey"
+                      keyPassword = "android"
+                      storeType = "PKCS12"
+                  }}
+              }}
+
+          """
+              old = 'signingConfig = signingConfigs.getByName("debug")'
+              new = 'signingConfig = signingConfigs.getByName("sideload")'
+          else:
+              block = f"""
+              signingConfigs {{
+                  sideload {{
+                      storeFile file("{store}")
+                      storePassword "android"
+                      keyAlias "androiddebugkey"
+                      keyPassword "android"
+                      storeType "PKCS12"
+                  }}
+              }}
+
+          """
+              old = "signingConfig signingConfigs.debug"
+              new = "signingConfig signingConfigs.sideload"
+          if old not in text:
+              raise SystemExit(f"release signing line not found in {path}")
+          needle = "    buildTypes {"
+          if needle not in text:
+              raise SystemExit(f"buildTypes block not found in {path}")
+          text = text.replace(needle, block + needle, 1).replace(old, new, 1)
+          path.write_text(text)
+          print(path.read_text())
+          PY
+
+      - name: Ensure required Android SDK components
+        run: |
+          set -uo pipefail
+          SM=""
+          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          elif command -v sdkmanager >/dev/null 2>&1; then
+            SM="$(command -v sdkmanager)"
+          fi
+          if [ -z "$SM" ]; then
+            echo "::warning::sdkmanager not found — relying on preinstalled SDK components"
+            exit 0
+          fi
+          yes | "$SM" --licenses >/dev/null 2>&1 || true
+          # Install a broad set so whatever compileSdk the current Flutter
+          # template pins is covered.
+          for p in "platform-tools" "platforms;android-34" "platforms;android-35" "platforms;android-36" "build-tools;34.0.0" "build-tools;35.0.0"; do
+            "$SM" "$p" >/dev/null 2>&1 || true
+          done
+          "$SM" --list_installed 2>/dev/null | head -20
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build release APK (universal + per-ABI)
+        run: |
+          flutter build apk --release
+          flutter build apk --release --split-per-abi
+
+      - name: Require the committed signing key
+        run: |
+          set -euo pipefail
+          python3 signing/verify_apk_cert.py \
+            build/app/outputs/flutter-apk/app-release.apk \
+            signing/CERT.sha256
+          python3 signing/verify_apk_cert.py \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            signing/CERT.sha256
+
+      # Prove the INTERNET permission survived manifest merging into each
+      # release APK's binary manifest — the whole point of the network fix.
+      - name: Verify network permission in the built APKs
+        run: |
+          set -euo pipefail
+          AAPT2="$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -z "$AAPT2" ]; then
+            echo "::warning::aapt2 not found — skipping binary manifest check"
+            exit 0
+          fi
+          for apk in \
+            build/app/outputs/flutter-apk/app-release.apk \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk; do
+            echo "== $apk =="
+            "$AAPT2" dump permissions "$apk" | tee /tmp/permissions.txt
+            grep -q "android.permission.INTERNET" /tmp/permissions.txt \
+              || { echo "::error::INTERNET permission missing from $apk"; exit 1; }
+          done
+
+      - name: Collect APKs
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
+          mkdir -p artifacts/apk
+          # Drop the previous version so a phone download cannot grab a stale APK.
+          find artifacts/apk -maxdepth 1 -type f \( -name 'Tr-Daily-v*.apk' -o -name 'Tr-Daily-v*.apk.b64' -o -name 'README.txt' \) -delete
+          cp build/app/outputs/flutter-apk/app-release.apk            "artifacts/apk/Tr-Daily-v${APP_VERSION}-universal.apk"
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk  "artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk"
+          base64 -w 0 "artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk" \
+            > "artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk.b64"
+          printf '%s\n' \
+            "APK artifacts for on-device testing of Tr-Daily v${APP_VERSION}." \
+            "" \
+            "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk      raw APK (64-bit phones — recommended)" \
+            "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk.b64  base64 text copy of the arm64 APK." \
+            "                                     Recover with: base64 -d <file.b64> > <file.apk>" \
+            "- Tr-Daily-v${APP_VERSION}-universal.apk      raw APK (all ABIs)" \
+            "" \
+            "The watchlist is not a lock. Each pass charts the next listed names." \
+            "If Install does not replace the app, uninstall Tr-Daily once, then install this file." \
+            "This does not guarantee a profit." \
+            > artifacts/apk/README.txt
+          ls -lh artifacts/apk/
+
+      - name: Upload APKs as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tr-daily-apks
+          path: artifacts/apk/
+          if-no-files-found: error
+
+      - name: Commit APKs to branch
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
+          git config user.name "SpotVibeapp"
+          git config user.email "288161393+SpotVibeapp@users.noreply.github.com"
+          git add -A artifacts/apk/
+          if git diff --cached --quiet; then
+            echo "APKs unchanged — nothing to commit."
+          else
+            git commit -m "chore(release): add v${APP_VERSION} APKs (arm64-v8a + universal) for device testing"
+            git push origin "HEAD:${BRANCH:-main}"
+          fi
+        env:
+          BRANCH: arena/01a0d962-tr-daily
+
+      # The sandbox that consumes this branch cannot reach uploads.github.com,
+      # so release assets are uploaded from the runner, which has full egress.
+      - name: Publish APKs to GitHub Release
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(awk -F': *' '/^version:/ {print $2; exit}' pubspec.yaml | cut -d+ -f1)
+          TAG="v${APP_VERSION}-test-apk"
+          {
+            printf '%s\n' "Release APKs for on-device testing."
+            printf '%s\n' ""
+            printf '%s\n' "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk (19 MB) — 64-bit phones (recommended)"
+            printf '%s\n' "- Tr-Daily-v${APP_VERSION}-universal.apk (52 MB) — all ABIs"
+            printf '%s\n' ""
+            printf '%s\n' "Built by the Build APK workflow on Flutter stable. Signed with the committed sideload key so a later build can update this one. Not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily. Combines market scanning, portfolio and push notifications. The watchlist is not a lock. If an older install refuses to update, uninstall it once."
+          } > /tmp/release-notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes
+          fi
+          if gh release create "$TAG" \
+            artifacts/apk/Tr-Daily-v${APP_VERSION}-arm64-v8a.apk \
+            artifacts/apk/Tr-Daily-v${APP_VERSION}-universal.apk \
+            --title "Tr-Daily v${APP_VERSION} — test APKs" \
+            --notes-file /tmp/release-notes.md \
+            --target "${BRANCH}"; then
+            echo "Release $TAG published."
+          else
+            echo "::warning::Release publish failed (the app token likely lacks the releases permission). APKs are still committed to the branch and uploaded as the tr-daily-apks artifact."
+          fi
+        env:
+          BRANCH: arena/01a0d962-tr-daily
