@@ -556,6 +556,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       },
                     ),
                     _switchRow(
+                      'Keep running when closed',
+                      'Android shows a notification and keeps scanning if you leave or swipe the app away. Force Stop in system settings still stops it. The phone being off stops it too.',
+                      s.keepRunningWhenClosed,
+                      (v) {
+                        setState(() => s.keepRunningWhenClosed = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    _switchRow(
                       'Extended-hours trading',
                       'Route orders 4am–8pm ET (Alpaca; market orders only)',
                       s.extendedHours,

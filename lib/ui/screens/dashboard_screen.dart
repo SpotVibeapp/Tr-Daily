@@ -163,9 +163,11 @@ class DashboardScreen extends StatelessWidget {
                             ),
                             Text(
                               state.engineRunning
-                                  ? 'Scanning ${state.settings.watchlist.length} watchlist'
-                                      '${state.budget.last.sleeve.isEmpty ? '' : ' + ${state.budget.last.sleeve.length} budget'}'
-                                      ' names every ${state.settings.scanIntervalSeconds}s'
+                                  ? (state.backgroundRunning
+                                      ? 'Keeps scanning if you close the app. Notification stays up.'
+                                      : 'Scanning ${state.settings.watchlist.length} watchlist'
+                                          '${state.budget.last.sleeve.isEmpty ? '' : ' + ${state.budget.last.sleeve.length} budget'}'
+                                          ' names every ${state.settings.scanIntervalSeconds}s')
                                   : 'Start it to scan & trade automatically',
                               style: const TextStyle(
                                 color: TrTheme.textMuted,

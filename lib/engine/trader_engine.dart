@@ -50,9 +50,9 @@ class PositionMeta {
 /// The autonomous loop: scan → score → risk-check → execute → manage exits.
 ///
 /// Platform-agnostic (dart:async only) so the same engine can run in the app,
-/// a CLI, or a server later. Mobile OSes suspend background work — while the
-/// app is foregrounded the engine ticks every [AppSettings.scanIntervalSeconds]
-/// during market hours.
+/// a CLI, or a server later. On Android a foreground service calls [tick]
+/// after the UI is closed. Other platforms tick only while the process is
+/// alive. Ticks follow [AppSettings.scanIntervalSeconds] during market hours.
 class TraderEngine {
   TraderEngine({
     required this.broker,
@@ -73,7 +73,7 @@ class TraderEngine {
   final Broker broker;
   final MarketDataSource source;
   final MarketScanner scanner;
-  final AppSettings settings;
+  AppSettings settings;
   final RiskManager risk;
   final BudgetSession budget;
   final DateTime Function() _clock;
@@ -163,15 +163,20 @@ class TraderEngine {
   }
 
   /// Start the periodic loop. Safe to call when already running.
-  void start() {
+  ///
+  /// [periodic] is false when a foreground service calls [tick] itself.
+  void start({bool periodic = true}) {
     if (isRunning) return;
     state = EngineState.starting;
     _emit('info', 'engine starting (${broker.id}, interval ${settings.interval.name})');
     _timer?.cancel();
-    _timer = Timer.periodic(
-      Duration(seconds: settings.scanIntervalSeconds.clamp(10, 3600)),
-      (_) => unawaited(tick()),
-    );
+    _timer = null;
+    if (periodic) {
+      _timer = Timer.periodic(
+        Duration(seconds: settings.scanIntervalSeconds.clamp(10, 3600)),
+        (_) => unawaited(tick()),
+      );
+    }
     state = EngineState.running;
     unawaited(tick());
   }
@@ -183,8 +188,11 @@ class TraderEngine {
     _emit('info', 'engine stopped');
   }
 
+  bool _tickBusy = false;
+
   /// One full cycle — exposed for manual "Scan now" buttons & tests.
   Future<void> tick({bool force = false}) async {
+    if (_tickBusy) return;
     final now = _clock();
     if (state == EngineState.stopped && !force) return;
     if (risk.isHalted && state != EngineState.halted) {
@@ -202,7 +210,7 @@ class TraderEngine {
     }
     state = EngineState.running;
     cycleCount++;
-
+    _tickBusy = true;
     try {
       // Held names stay in the scan even after they leave the watchlist,
       // which is how a budget-sleeve position still gets exit management.
@@ -445,6 +453,8 @@ class TraderEngine {
       lastError = e.toString();
       lastErrorAt = now;
       _emit('error', 'cycle failed: $e');
+    } finally {
+      _tickBusy = false;
     }
   }
 

@@ -13,6 +13,7 @@ import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../engine/backtester.dart';
 import '../engine/budget.dart';
+import '../engine/keep_alive_hooks.dart';
 import '../engine/scanner.dart';
 import '../engine/trader_engine.dart';
 import '../risk/risk_manager.dart';
@@ -68,10 +69,15 @@ class AppState extends ChangeNotifier {
 
   static const String _kSettings = 'trdaily.settings.v1';
   static const String _kPaper = 'trdaily.paper.v1';
+  static const String keepAliveStatusKey = 'trdaily.keepalive.v1';
+
+  /// True when the Android foreground service owns the scan.
+  bool backgroundRunning = false;
+  Timer? _keepAlivePoll;
 
   // ---------------------------------------------------------------- init
 
-  Future<void> init() async {
+  Future<void> init({bool launchEngine = true}) async {
     final settingsJson = await _json.readObject(_kSettings);
     settings = settingsJson != null
         ? AppSettings.fromJson(settingsJson)
@@ -110,8 +116,17 @@ class AppState extends ChangeNotifier {
 
     initialized = true;
     _log('info', 'ready · data=${dataSource.id} · broker=${broker.id}');
-    if (settings.startEngineOnLaunch) {
-      startEngine();
+    if (launchEngine) {
+      final serviceUp =
+          KeepAliveHooks.supported && await (KeepAliveHooks.isRunning?.call() ?? Future<bool>.value(false));
+      if (serviceUp) {
+        backgroundRunning = true;
+        _startKeepAlivePoll();
+        _log('info', 'Still scanning in the background. Closing the app does not stop it.');
+      } else if (settings.startEngineOnLaunch ||
+          (settings.engineArmed && settings.keepRunningWhenClosed)) {
+        await startEngine();
+      }
     }
     notifyListeners();
   }
@@ -166,7 +181,8 @@ class AppState extends ChangeNotifier {
     _engineSub = e.events.listen((ev) {
       _log(ev.type, ev.message);
       if (ev.type == 'trade' || ev.type == 'exit' || ev.type == 'halt') {
-        unawaited(_persistPaper());
+        // The background service owns the paper file while it is running.
+        if (!backgroundRunning) unawaited(_persistPaper());
         unawaited(refreshAccount());
         _dispatchNotification(ev);
       }
@@ -244,6 +260,21 @@ class AppState extends ChangeNotifier {
       (broker as PaperBroker).setAllowShort(settings.allowShort);
     }
     _log('info', 'settings saved');
+    if (backgroundRunning) {
+      final intervalChanged = prev != null &&
+          prev['scanIntervalSeconds'] != settings.scanIntervalSeconds;
+      if (!settings.keepRunningWhenClosed) {
+        await KeepAliveHooks.stop?.call();
+        backgroundRunning = false;
+        _keepAlivePoll?.cancel();
+        _keepAlivePoll = null;
+        engine?.start();
+      } else if (intervalChanged || brokerChanged) {
+        await KeepAliveHooks.restart?.call(settings.scanIntervalSeconds);
+      } else {
+        await KeepAliveHooks.send?.call(<String, String>{'cmd': 'reload'});
+      }
+    }
     notifyListeners();
   }
 
@@ -286,17 +317,45 @@ class AppState extends ChangeNotifier {
 
   // ------------------------------------------------------------- engine
 
-  void startEngine() {
+  Future<void> startEngine() async {
+    settings.engineArmed = true;
+    await persistSettings();
+    if (settings.keepRunningWhenClosed && KeepAliveHooks.supported) {
+      final started = await KeepAliveHooks.start?.call(settings.scanIntervalSeconds) ??
+          false;
+      if (started) {
+        engine?.stop();
+        backgroundRunning = true;
+        _startKeepAlivePoll();
+        _log(
+          'info',
+          'Engine keeps running if you leave or close the app. A notification stays up. Force Stop in Android settings still stops it. This does not guarantee a profit.',
+        );
+        notifyListeners();
+        return;
+      }
+      _log(
+        'error',
+        'Could not keep the engine alive after the app closes. It will stop if you leave. Allow notifications and unrestricted battery, then start it again.',
+      );
+    }
     engine?.start();
     notifyListeners();
   }
 
-  void stopEngine() {
+  Future<void> stopEngine() async {
+    settings.engineArmed = false;
+    await persistSettings();
+    await KeepAliveHooks.stop?.call();
+    backgroundRunning = false;
+    _keepAlivePoll?.cancel();
+    _keepAlivePoll = null;
     engine?.stop();
+    await writeKeepAliveStatus(running: false, note: 'Stopped.');
     notifyListeners();
   }
 
-  bool get engineRunning => engine?.isRunning ?? false;
+  bool get engineRunning => backgroundRunning || (engine?.isRunning ?? false);
   EngineState get engineState => engine?.state ?? EngineState.stopped;
 
   Future<void> scanNow() async {
@@ -377,7 +436,7 @@ class AppState extends ChangeNotifier {
         }
       }
       signals = merged;
-      if (broker is PaperBroker) await _persistPaper();
+      if (broker is PaperBroker && !backgroundRunning) await _persistPaper();
       _log('scan',
           'manual scan complete · ${merged.length} symbols · source=${out.dataSourceId}');
     } catch (e) {
@@ -449,6 +508,15 @@ class AppState extends ChangeNotifier {
 
   /// Close an open position immediately via broker market order.
   Future<void> closePosition(String symbol) async {
+    if (backgroundRunning) {
+      await KeepAliveHooks.send?.call(<String, String>{
+        'cmd': 'close',
+        'symbol': symbol,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      await pullKeepAliveStatus();
+      return;
+    }
     try {
       await broker.closePosition(symbol);
       _log('exit', 'manually closed position for $symbol');
@@ -466,6 +534,9 @@ class AppState extends ChangeNotifier {
   PositionMeta? getPositionMeta(String symbol) => engine?.positionMeta[symbol];
 
   Future<void> resetPaperAccount() async {
+    final resume = backgroundRunning;
+    if (resume) await KeepAliveHooks.stop?.call();
+    backgroundRunning = false;
     final next = settings;
     next.useLocalPaper = true;
     engine?.stop();
@@ -478,6 +549,7 @@ class AppState extends ChangeNotifier {
     await refreshAccount();
     _log('info', 'paper account reset to \$${next.paperStartingCash.toStringAsFixed(0)}');
     notifyListeners();
+    if (resume) await startEngine();
   }
 
   Future<void> _persistPaper() async {
@@ -502,12 +574,93 @@ class AppState extends ChangeNotifier {
   /// Rebuilds UI after imperative tweaks (e.g. risk-manager reset).
   void notifyManually() => notifyListeners();
 
+  Future<void> persistSettings() =>
+      _json.writeObject(_kSettings, settings.toJson());
+
+  Future<void> reloadSettingsFromDisk() async {
+    final json = await _json.readObject(_kSettings);
+    if (json == null) return;
+    settings = AppSettings.fromJson(json);
+    engine?.settings = settings;
+    risk.config = settings.risk;
+    notifications.config = settings.notifications;
+    ensemble.config = settings.ensemble;
+  }
+
+  Future<void> writeKeepAliveStatus({
+    required bool running,
+    String? note,
+  }) async {
+    final lines = log.length <= 20 ? log : log.sublist(log.length - 20);
+    await _json.writeObject(keepAliveStatusKey, <String, dynamic>{
+      'running': running,
+      'note': note ?? '',
+      'updatedAt': DateTime.now().toIso8601String(),
+      'lines': <Map<String, String>>[
+        for (final entry in lines)
+          <String, String>{
+            'time': entry.time.toIso8601String(),
+            'type': entry.type,
+            'message': entry.message,
+          },
+      ],
+    });
+  }
+
+  Future<void> pullKeepAliveStatus() async {
+    final json = await _json.readObject(keepAliveStatusKey);
+    if (json == null) return;
+    final wasRunning = backgroundRunning;
+    backgroundRunning = json['running'] == true;
+    if (wasRunning && !backgroundRunning) {
+      final disk = await _json.readObject(_kSettings);
+      if (disk != null) settings.engineArmed = disk['engineArmed'] == true;
+    }
+    final rawLines = json['lines'];
+    if (rawLines is List) {
+      for (final raw in rawLines) {
+        if (raw is! Map) continue;
+        final message = raw['message']?.toString() ?? '';
+        final type = raw['type']?.toString() ?? 'info';
+        final time = DateTime.tryParse(raw['time']?.toString() ?? '') ??
+            DateTime.now();
+        final seen = log.any(
+          (entry) => entry.message == message && entry.type == type,
+        );
+        if (message.isNotEmpty && !seen) {
+          log.add(LogEntry(time, type, message));
+        }
+      }
+      if (log.length > 200) log.removeRange(0, log.length - 200);
+    }
+    if (backgroundRunning && broker is PaperBroker) {
+      final paperJson = await _json.readObject(_kPaper);
+      if (paperJson != null) {
+        broker = PaperBroker.fromJson(paperJson);
+        account = await broker.getAccount();
+        positions = await broker.getPositions();
+      }
+    }
+    final note = json['note']?.toString() ?? '';
+    if (!backgroundRunning && note.startsWith('Android stopped')) {
+      lastError = note;
+    }
+    notifyListeners();
+  }
+
+  void _startKeepAlivePoll() {
+    _keepAlivePoll?.cancel();
+    _keepAlivePoll = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(pullKeepAliveStatus());
+    });
+    unawaited(pullKeepAliveStatus());
+  }
+
   @override
   void dispose() {
-    // Drop engine events BEFORE disposing — engine.stop() emits one, and its
-    // async delivery would otherwise hit notifyListeners() after this
-    // ChangeNotifier is disposed (crashed the app-smoke test, and could
-    // crash the app itself on shutdown).
+    // Do not stop the foreground service here. Closing the UI is the case
+    // the service exists for. Only a Stop from the user clears it.
+    _keepAlivePoll?.cancel();
     unawaited(_engineSub?.cancel());
     notifications.dispose();
     engine?.stop();

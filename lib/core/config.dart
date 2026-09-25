@@ -46,6 +46,8 @@ class AppSettings {
     this.allowConvictionRisk = true,
     this.allowOvernightHolds = false,
     this.useLocalPaper = false,
+    this.keepRunningWhenClosed = true,
+    this.engineArmed = false,
   })  : keys = keys ?? const TradingKeys(keyId: '', secretKey: ''),
         watchlist = watchlist ?? List<String>.from(defaultWatchlist),
         risk = risk ?? const RiskConfig(),
@@ -112,6 +114,14 @@ class AppSettings {
   /// still uses the broker. Set when the user picks a test cash amount.
   bool useLocalPaper;
 
+  /// On Android, keep scanning after the app is closed or the screen locks.
+  /// A notification stays up. Force Stop in system settings still stops it.
+  bool keepRunningWhenClosed;
+
+  /// True after the user starts the engine, until they stop it. Used to
+  /// resume after the process is killed, without starting a fresh install.
+  bool engineArmed;
+
   bool get liveTrading => brokerMode == BrokerMode.live && keys.isConfigured;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -139,6 +149,8 @@ class AppSettings {
         'allowConvictionRisk': allowConvictionRisk,
         'allowOvernightHolds': allowOvernightHolds,
         'useLocalPaper': useLocalPaper,
+        'keepRunningWhenClosed': keepRunningWhenClosed,
+        'engineArmed': engineArmed,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -205,6 +217,9 @@ class AppSettings {
           defaults.allowOvernightHolds,
       useLocalPaper:
           json['useLocalPaper'] as bool? ?? defaults.useLocalPaper,
+      keepRunningWhenClosed: json['keepRunningWhenClosed'] as bool? ??
+          defaults.keepRunningWhenClosed,
+      engineArmed: json['engineArmed'] as bool? ?? defaults.engineArmed,
     );
   }
 }
