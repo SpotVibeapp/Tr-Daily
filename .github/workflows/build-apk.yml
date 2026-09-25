@@ -9,7 +9,7 @@ name: Build APK
 #    the APK-commit step skips re-pushing when bytes are unchanged, so no loop)
 #  - repository_dispatch `build-apk` (only fires once this file is on the
 #    default branch; until then, push a change to this file). Rebuilds the
-#    v0.1.8 efficiency APK. Faster scans, no demo-price entries, no second order while one is working.
+#    v0.1.9 APK. Same sideload key on every build, so a later APK can update this one.
 #  - workflow_dispatch (visible once the file exists on the default branch)
 on:
   push:
@@ -77,6 +77,62 @@ jobs:
           print(manifest.read_text())
           PY
 
+      # Each GitHub runner used to mint a new debug key. Android then refused
+      # the update and left the old app installed. Release builds now use the
+      # keystore in signing/, so the next APK can install over this one.
+      - name: Pin the sideload signing key
+        run: |
+          python3 << 'PY'
+          from pathlib import Path
+          keystore = Path("signing/debug.keystore").resolve()
+          if not keystore.is_file():
+              raise SystemExit(f"missing {keystore}")
+          gradle_files = list(Path("android/app").glob("build.gradle*"))
+          if len(gradle_files) != 1:
+              raise SystemExit(f"expected one app gradle file, found {gradle_files}")
+          path = gradle_files[0]
+          text = path.read_text()
+          store = str(keystore).replace("\\", "/")
+          if path.suffix == ".kts":
+              block = f"""
+              signingConfigs {{
+                  create("sideload") {{
+                      storeFile = file("{store}")
+                      storePassword = "android"
+                      keyAlias = "androiddebugkey"
+                      keyPassword = "android"
+                      storeType = "PKCS12"
+                  }}
+              }}
+
+          """
+              old = 'signingConfig = signingConfigs.getByName("debug")'
+              new = 'signingConfig = signingConfigs.getByName("sideload")'
+          else:
+              block = f"""
+              signingConfigs {{
+                  sideload {{
+                      storeFile file("{store}")
+                      storePassword "android"
+                      keyAlias "androiddebugkey"
+                      keyPassword "android"
+                      storeType "PKCS12"
+                  }}
+              }}
+
+          """
+              old = "signingConfig signingConfigs.debug"
+              new = "signingConfig signingConfigs.sideload"
+          if old not in text:
+              raise SystemExit(f"release signing line not found in {path}")
+          needle = "    buildTypes {"
+          if needle not in text:
+              raise SystemExit(f"buildTypes block not found in {path}")
+          text = text.replace(needle, block + needle, 1).replace(old, new, 1)
+          path.write_text(text)
+          print(path.read_text())
+          PY
+
       - name: Ensure required Android SDK components
         run: |
           set -uo pipefail
@@ -106,6 +162,16 @@ jobs:
           flutter build apk --release
           flutter build apk --release --split-per-abi
 
+      - name: Require the committed signing key
+        run: |
+          set -euo pipefail
+          python3 signing/verify_apk_cert.py \
+            build/app/outputs/flutter-apk/app-release.apk \
+            signing/CERT.sha256
+          python3 signing/verify_apk_cert.py \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            signing/CERT.sha256
+
       - name: Collect APKs
         run: |
           set -euo pipefail
@@ -125,9 +191,9 @@ jobs:
             "                                     Recover with: base64 -d <file.b64> > <file.apk>" \
             "- Tr-Daily-v${APP_VERSION}-universal.apk      raw APK (all ABIs)" \
             "" \
-            "Install this build, not an older file. Scans run a few names at a time." \
-            "Demo prices and stale bars do not open a trade. A working order" \
-            "blocks a second order in that name. This does not guarantee a profit." \
+            "If Install does not replace the app, uninstall Tr-Daily once, then install this file." \
+            "Later builds use this same key, so Install can update them." \
+            "This does not guarantee a profit." \
             > artifacts/apk/README.txt
           ls -lh artifacts/apk/
 
@@ -167,7 +233,7 @@ jobs:
             printf '%s\n' "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk (19 MB) — 64-bit phones (recommended)"
             printf '%s\n' "- Tr-Daily-v${APP_VERSION}-universal.apk (52 MB) — all ABIs"
             printf '%s\n' ""
-            printf '%s\n' "Built by the Build APK workflow on Flutter stable. Signed with the CI debug key (v2) — fine for sideloading, not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily"
+            printf '%s\n' "Built by the Build APK workflow on Flutter stable. Signed with the committed sideload key so a later build can update this one. Not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily. If an older install refuses to update, uninstall it once — that older file was signed with a different key."
           } > /tmp/release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes

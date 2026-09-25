@@ -136,6 +136,10 @@ Phased plan in [docs/ROADMAP.md](docs/ROADMAP.md):
 4. ⬜ Cloud deployment of the same Dart engine (run while device is off)
 5. ⬜ Strategy lab (parameter sweeps), walk-forward optimizer
 
+## Phone install
+
+Sideload `artifacts/apk/Tr-Daily-v*-arm64-v8a.apk` (about 19 MB). Use the raw file, not the GitHub preview page. If tapping Install leaves the old app in place, uninstall Tr-Daily once and install again. Builds before v0.1.9 were each signed with a different key, so Android will not update them. Uninstalling removes on-phone settings and the paper log. It does not close positions at the broker.
+
 ## Development
 
 ```bash
