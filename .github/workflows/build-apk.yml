@@ -9,11 +9,11 @@ name: Build APK
 #    the APK-commit step skips re-pushing when bytes are unchanged, so no loop)
 #  - repository_dispatch `build-apk` (only fires once this file is on the
 #    default branch; until then, push a change to this file). Rebuilds the
-#    v0.1.11 APK. Watchlist is not a lock. Walk the listed market. Same sideload key.
+#    current release APK: market scanning + portfolio + push combined.
 #  - workflow_dispatch (visible once the file exists on the default branch)
 on:
   push:
-    branches: [arena/01a0d503-tr-daily]
+    branches: [arena/01a0d962-tr-daily]
     paths: [.github/workflows/build-apk.yml]
   repository_dispatch:
     types: [build-apk]
@@ -43,6 +43,33 @@ jobs:
       # android/ platform folder from the installed SDK's templates.
       - name: Generate android/ platform folder
         run: flutter create --platforms android --project-name tr_daily .
+
+      # The app talks to Yahoo Finance, Alpaca, Discord and Telegram over
+      # HTTPS. Flutter templates only guarantee INTERNET in the debug/profile
+      # manifests, so a release APK built from a bare template can fail every
+      # market-data call with SocketException. Declare it in the main manifest
+      # unconditionally and hard-fail if it is not there afterwards.
+      - name: Fix the Android network manifest
+        run: |
+          python3 << 'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+          if "android.permission.INTERNET" not in text:
+              text = text.replace(
+                  "</manifest>",
+                  '    <uses-permission android:name="android.permission.INTERNET"/>\n</manifest>',
+                  1,
+              )
+              manifest.write_text(text)
+              print("Added android.permission.INTERNET to the main manifest.")
+          else:
+              print("INTERNET permission already present in the main manifest.")
+          text = manifest.read_text()
+          if "android.permission.INTERNET" not in text:
+              raise SystemExit("INTERNET permission missing from the main manifest")
+          print(text)
+          PY
 
       - name: Declare the keep-alive foreground service
         run: |
@@ -172,6 +199,25 @@ jobs:
             build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
             signing/CERT.sha256
 
+      # Prove the INTERNET permission survived manifest merging into each
+      # release APK's binary manifest — the whole point of the network fix.
+      - name: Verify network permission in the built APKs
+        run: |
+          set -euo pipefail
+          AAPT2="$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -z "$AAPT2" ]; then
+            echo "::warning::aapt2 not found — skipping binary manifest check"
+            exit 0
+          fi
+          for apk in \
+            build/app/outputs/flutter-apk/app-release.apk \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk; do
+            echo "== $apk =="
+            "$AAPT2" dump permissions "$apk" | tee /tmp/permissions.txt
+            grep -q "android.permission.INTERNET" /tmp/permissions.txt \
+              || { echo "::error::INTERNET permission missing from $apk"; exit 1; }
+          done
+
       - name: Collect APKs
         run: |
           set -euo pipefail
@@ -218,7 +264,7 @@ jobs:
             git push origin "HEAD:${BRANCH:-main}"
           fi
         env:
-          BRANCH: arena/01a0d503-tr-daily
+          BRANCH: arena/01a0d962-tr-daily
 
       # The sandbox that consumes this branch cannot reach uploads.github.com,
       # so release assets are uploaded from the runner, which has full egress.
@@ -233,7 +279,7 @@ jobs:
             printf '%s\n' "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk (19 MB) — 64-bit phones (recommended)"
             printf '%s\n' "- Tr-Daily-v${APP_VERSION}-universal.apk (52 MB) — all ABIs"
             printf '%s\n' ""
-            printf '%s\n' "Built by the Build APK workflow on Flutter stable. Signed with the committed sideload key so a later build can update this one. Not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily. The watchlist is not a lock. If an older install refuses to update, uninstall it once."
+            printf '%s\n' "Built by the Build APK workflow on Flutter stable. Signed with the committed sideload key so a later build can update this one. Not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily. Combines market scanning, portfolio and push notifications. The watchlist is not a lock. If an older install refuses to update, uninstall it once."
           } > /tmp/release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes
@@ -249,4 +295,4 @@ jobs:
             echo "::warning::Release publish failed (the app token likely lacks the releases permission). APKs are still committed to the branch and uploaded as the tr-daily-apks artifact."
           fi
         env:
-          BRANCH: arena/01a0d503-tr-daily
+          BRANCH: arena/01a0d962-tr-daily

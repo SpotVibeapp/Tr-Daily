@@ -142,6 +142,8 @@ Sideload `artifacts/apk/Tr-Daily-v*-arm64-v8a.apk` (about 19 MB). Use the raw fi
 
 v0.1.11 walks the listed US market. The watchlist is still checked every pass, but a stock does not have to be on it to be traded. The phone charts a slice each pass so the scan can finish.
 
+v0.2.0 merges both feature lines into one app: dynamic market scanning (walks the listed US market, spread + quiet-day gates, news review, keep-alive scan service) together with the portfolio view and remote push notifications (Discord/Telegram) from main. The release build also pins `android.permission.INTERNET` in the main Android manifest, so market-data calls cannot fail from a missing network permission in release APKs.
+
 ## Development
 
 ```bash
