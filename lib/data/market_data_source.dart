@@ -295,7 +295,7 @@ class AlpacaDataSource implements MarketDataSource {
       final out = <String, double>{};
       raw.forEach((key, value) {
         if (key == 'snapshots' || value is! Map) return;
-        final px = _snapshotPrice(Map<dynamic, dynamic>.from(value as Map));
+        final px = _snapshotPrice(Map<dynamic, dynamic>.from(value));
         if (px != null && px > 0) out[key.toString().toUpperCase()] = px;
       });
       return out;
