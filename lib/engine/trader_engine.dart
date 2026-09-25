@@ -967,11 +967,12 @@ class TraderEngine {
     }
 
     final regular = isMarketOpen(now);
-    final side = entrySide == Stance.long ? OrderSide.buy : OrderSide.sell;
+    final orderSide =
+        entrySide == Stance.long ? OrderSide.buy : OrderSide.sell;
     final isLive = broker.mode == BrokerMode.live;
     final request = sessionOrder(
       symbol: sig.symbol,
-      side: side,
+      side: orderSide,
       qty: qty,
       regularSession: regular,
       quote: quote,
@@ -1078,15 +1079,6 @@ class TraderEngine {
     }
     _emit('info',
         'order for $symbol still pending after 30s — will keep checking next cycles');
-  }
-
-  Future<T?> _safe<T>(Future<T> Function() fn) async {
-    try {
-      return await fn();
-    } catch (e) {
-      _emit('error', '$e');
-      return null;
-    }
   }
 
   void dispose() {

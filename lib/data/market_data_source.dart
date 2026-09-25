@@ -415,6 +415,13 @@ class SyntheticMarketSource implements MarketDataSource {
   String get id => 'synthetic';
 
   @override
+  Future<BidAsk?> getQuote(String symbol) async => null;
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async =>
+      <String, BidAsk>{};
+
+  @override
   Future<List<Candle>> getBars({
     required String symbol,
     required BarInterval interval,
@@ -480,6 +487,13 @@ class BundledCsvSource implements MarketDataSource {
 
   @override
   String get id => 'bundled';
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async => null;
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async =>
+      <String, BidAsk>{};
 
   @override
   Future<List<Candle>> getBars({

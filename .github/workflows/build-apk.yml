@@ -9,7 +9,7 @@ name: Build APK
 #    the APK-commit step skips re-pushing when bytes are unchanged, so no loop)
 #  - repository_dispatch `build-apk` (only fires once this file is on the
 #    default branch; until then, push a change to this file). Rebuilds the
-#    v0.1.7 cost-gate APK. Skip a wide spread. No market orders outside the regular session.
+#    v0.1.7 cost-gate APK. Skip a wide spread. No market orders outside the regular session. Build after the compile fix.
 #  - workflow_dispatch (visible once the file exists on the default branch)
 on:
   push:
