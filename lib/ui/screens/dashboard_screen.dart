@@ -670,7 +670,14 @@ String _engineCaption(AppState state) {
     return 'LIVE. Keep-alive is not running, so leaving the app can stop orders.';
   }
   if (state.backgroundRunning) {
-    return 'Keeps scanning if you close the app. Notification stays up.';
+    return state.settings.scanListedMarket
+        ? 'Keeps walking the listed market if you close the app. Notification stays up.'
+        : 'Keeps scanning if you close the app. Notification stays up.';
+  }
+  if (state.settings.scanListedMarket) {
+    final range = state.marketScan.last.rangeLabel;
+    final where = range.isEmpty ? 'the listed market' : 'listed $range';
+    return 'Walking $where, plus the watchlist, every ${state.settings.scanIntervalSeconds}s.';
   }
   final sleeve = state.budget.last.sleeve.length;
   return 'Scanning ${state.settings.watchlist.length} watchlist'

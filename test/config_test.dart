@@ -55,12 +55,14 @@ void main() {
         ..scanIntervalSeconds = 45
         ..fitToBudget = false
         ..budgetShareCeiling = 8
-        ..paperStartingCash = 100;
+        ..paperStartingCash = 100
+        ..scanListedMarket = false;
       final back = AppSettings.fromJson(s.toJson());
       expect(back.extendedHours, isTrue);
       expect(back.fitToBudget, isFalse);
       expect(back.budgetShareCeiling, 8);
       expect(back.paperStartingCash, 100);
+      expect(back.scanListedMarket, isFalse);
       expect(back.risk.scaleOutFraction, 0.4);
       expect(back.ensemble.enterThreshold, 0.55);
       expect(back.scanIntervalSeconds, 45);
@@ -83,6 +85,7 @@ void main() {
       expect(back.allowConvictionRisk, isTrue);
       expect(back.allowOvernightHolds, isFalse);
       expect(back.useLocalPaper, isFalse);
+      expect(back.scanListedMarket, isTrue);
     });
 
     test('notifications survive json roundtrip', () {

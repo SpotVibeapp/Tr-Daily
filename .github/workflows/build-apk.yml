@@ -9,7 +9,7 @@ name: Build APK
 #    the APK-commit step skips re-pushing when bytes are unchanged, so no loop)
 #  - repository_dispatch `build-apk` (only fires once this file is on the
 #    default branch; until then, push a change to this file). Rebuilds the
-#    v0.1.9 APK. Same sideload key on every build, so a later APK can update this one.
+#    v0.1.10 APK. Watchlist is not a lock. Walk the listed market. Same sideload key.
 #  - workflow_dispatch (visible once the file exists on the default branch)
 on:
   push:
@@ -191,8 +191,8 @@ jobs:
             "                                     Recover with: base64 -d <file.b64> > <file.apk>" \
             "- Tr-Daily-v${APP_VERSION}-universal.apk      raw APK (all ABIs)" \
             "" \
+            "The watchlist is not a lock. Each pass charts the next listed names." \
             "If Install does not replace the app, uninstall Tr-Daily once, then install this file." \
-            "Later builds use this same key, so Install can update them." \
             "This does not guarantee a profit." \
             > artifacts/apk/README.txt
           ls -lh artifacts/apk/
@@ -233,7 +233,7 @@ jobs:
             printf '%s\n' "- Tr-Daily-v${APP_VERSION}-arm64-v8a.apk (19 MB) — 64-bit phones (recommended)"
             printf '%s\n' "- Tr-Daily-v${APP_VERSION}-universal.apk (52 MB) — all ABIs"
             printf '%s\n' ""
-            printf '%s\n' "Built by the Build APK workflow on Flutter stable. Signed with the committed sideload key so a later build can update this one. Not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily. If an older install refuses to update, uninstall it once — that older file was signed with a different key."
+            printf '%s\n' "Built by the Build APK workflow on Flutter stable. Signed with the committed sideload key so a later build can update this one. Not for Play. Boots in paper-trading mode by default. Package: com.example.tr_daily. The watchlist is not a lock. If an older install refuses to update, uninstall it once."
           } > /tmp/release-notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes

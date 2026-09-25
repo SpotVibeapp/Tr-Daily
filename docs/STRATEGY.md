@@ -5,6 +5,8 @@ claims.
 
 ## 1. Inputs
 
+The auto-trader checks the watchlist every pass and also walks listed US stocks and ETFs, a slice at a time. A name does not have to be on the watchlist to be traded. OTC names are not included. It does not chart the entire market in one minute.
+
 Per symbol, on the configured interval (default 5-minute bars):
 
 - **EMA 9/21** trend posture and spread

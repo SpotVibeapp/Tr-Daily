@@ -23,6 +23,7 @@ void main() {
       expect(config.settings.scaleWithBalance, isTrue);
       expect(config.settings.allowConvictionRisk, isTrue);
       expect(config.settings.allowOvernightHolds, isFalse);
+      expect(config.settings.scanListedMarket, isTrue);
       expect(config.settings.notifications.hasWebhook, isFalse);
     });
 

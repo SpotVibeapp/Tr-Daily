@@ -56,6 +56,8 @@ class ServerConfig {
         (env['ALLOW_CONVICTION_RISK'] ?? 'true').toLowerCase() != 'false';
     final allowOvernightHolds =
         (env['ALLOW_OVERNIGHT_HOLDS'] ?? 'false').toLowerCase() == 'true';
+    final scanListedMarket =
+        (env['SCAN_LISTED_MARKET'] ?? 'true').toLowerCase() != 'false';
 
     final dpStr = (env['DATA_PROVIDER'] ?? 'auto').toLowerCase();
     final dataProvider = switch (dpStr) {
@@ -88,6 +90,7 @@ class ServerConfig {
       scaleWithBalance: scaleWithBalance,
       allowConvictionRisk: allowConvictionRisk,
       allowOvernightHolds: allowOvernightHolds,
+      scanListedMarket: scanListedMarket,
       risk: RiskConfig(
         riskPerTradePct: riskPerTrade,
         maxDailyLossPct: maxDailyLoss,

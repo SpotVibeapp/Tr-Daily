@@ -15,6 +15,7 @@ import '../data/models.dart';
 import '../analysis/news_review.dart';
 import '../risk/risk_manager.dart';
 import 'budget.dart';
+import 'market_scan.dart';
 import 'scanner.dart';
 
 enum EngineState { stopped, starting, running, halted }
@@ -65,9 +66,11 @@ class TraderEngine {
     required this.settings,
     required this.risk,
     BudgetSession? budget,
+    MarketScan? marketScan,
     DateTime Function()? clock,
     this.news,
   })  : budget = budget ?? BudgetSession(),
+        marketScan = marketScan ?? MarketScan(),
         _clock = clock ?? DateTime.now {
     final b = broker;
     if (b is PaperBroker) {
@@ -81,6 +84,7 @@ class TraderEngine {
   AppSettings settings;
   final RiskManager risk;
   final BudgetSession budget;
+  final MarketScan marketScan;
   final DateTime Function() _clock;
 
   /// When set, every scan reviews company and world headlines before entries
@@ -238,9 +242,26 @@ class TraderEngine {
         _emit('error', 'could not load positions before scan: $e');
       }
 
-      // 1) Fresh prices for the watchlist (plus anything already held).
+      // 1) Watchlist and held names every pass. When the listed-market walk
+      // is on, also chart the next slice. The watchlist is not a lock.
+      final pass = await marketScan.next(
+        enabled: settings.scanListedMarket,
+        priority: <String>[...settings.watchlist, ...extraHeld],
+        keys: settings.keys,
+        mode: settings.brokerMode,
+      );
+      if (settings.scanListedMarket && pass.universeSize > 0) {
+        final where = pass.kind == MarketListKind.backup
+            ? 'The full listed list was unavailable, so this pass uses the backup names.'
+            : '${pass.universeSize} listed names, ${listedNamesPerPass} new charts each pass, plus the watchlist every pass.';
+        _noteOnce(
+          now,
+          'Listed market scan is on. $where Not every chart at once, and not OTC. This does not guarantee a profit.',
+          notedDay: true,
+        );
+      }
       final outcome = await scanner.scan(
-        <String>[...settings.watchlist, ...extraHeld],
+        pass.symbols,
         interval: settings.interval,
         now: now,
       );
@@ -578,6 +599,9 @@ class TraderEngine {
         'scan #${signals.length} symbols',
         '${signals.where((s) => s.stance != Stance.flat).length} setups',
       ];
+      if (marketScan.last.walkedMarket) {
+        scanBits.add('listed ${marketScan.last.rangeLabel}');
+      }
       if (broker.mode == BrokerMode.live) scanBits.add('LIVE');
       if (risk.isHalted) {
         scanBits.add('daily loss stop');
@@ -612,7 +636,8 @@ class TraderEngine {
     final symbols = <String>[
       for (final position in positions) position.symbol,
       for (final symbol in settings.watchlist) symbol,
-      for (final signal in signals) signal.symbol,
+      for (final signal in signals)
+        if (signal.stance != Stance.flat) signal.symbol,
     ];
     try {
       final review = await desk.review(

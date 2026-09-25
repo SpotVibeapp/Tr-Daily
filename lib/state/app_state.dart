@@ -17,12 +17,17 @@ import '../data/models.dart';
 import '../engine/backtester.dart';
 import '../engine/budget.dart';
 import '../engine/cost_gate.dart';
+import '../engine/market_scan.dart';
+import '../engine/scan_quality.dart';
 import '../engine/keep_alive_hooks.dart';
 import '../engine/scanner.dart';
 import '../engine/trader_engine.dart';
 import '../risk/risk_manager.dart';
 import '../storage/local_store.dart';
 import '../strategy/ensemble.dart';
+
+Future<String> _readListedSymbols() =>
+    rootBundle.loadString('assets/listed_symbols.txt');
 
 class LogEntry {
   LogEntry(this.time, this.type, this.message);
@@ -52,6 +57,11 @@ class AppState extends ChangeNotifier {
   /// Shared with the engine so a manual scan and the auto-trader use one
   /// quote cache for the small-account sleeve.
   final BudgetSession budget = BudgetSession();
+
+  /// Shared so a manual scan and the auto-trader continue the same market walk.
+  final MarketScan marketScan = MarketScan(
+    readBundled: _readListedSymbols,
+  );
 
   AccountInfo account = const AccountInfo(
     equity: 0,
@@ -188,6 +198,7 @@ class AppState extends ChangeNotifier {
         settings: settings,
         risk: risk,
         budget: budget,
+        marketScan: marketScan,
         news: newsDesk,
       );
 
@@ -389,8 +400,14 @@ class AppState extends ChangeNotifier {
     lastError = null;
     notifyListeners();
     try {
+      final pass = await marketScan.next(
+        enabled: settings.scanListedMarket,
+        priority: settings.watchlist,
+        keys: settings.keys,
+        mode: settings.brokerMode,
+      );
       final out = await scanner.scan(
-        settings.watchlist,
+        pass.symbols,
         interval: settings.interval,
       );
       var merged = out.signals;
@@ -401,6 +418,7 @@ class AppState extends ChangeNotifier {
       if (broker is PaperBroker) {
         final pb = broker as PaperBroker;
         for (final s in out.signals) {
+          if (isDemoSource(s.sourceId)) continue;
           pb.setPrice(s.symbol, s.price);
         }
       }
@@ -443,6 +461,7 @@ class AppState extends ChangeNotifier {
             if (broker is PaperBroker) {
               final pb = broker as PaperBroker;
               for (final s in sleeveOut.signals) {
+                if (isDemoSource(s.sourceId)) continue;
                 pb.setPrice(s.symbol, s.price);
               }
             }
@@ -466,7 +485,8 @@ class AppState extends ChangeNotifier {
           newsReview = await newsDesk.review(
             symbols: <String>[
               ...settings.watchlist,
-              for (final signal in merged) signal.symbol,
+              for (final signal in merged)
+                if (signal.stance != Stance.flat) signal.symbol,
             ],
             now: DateTime.now(),
             charts: <String, SignalScore>{
@@ -478,8 +498,9 @@ class AppState extends ChangeNotifier {
         }
       }
       if (broker is PaperBroker && !backgroundRunning) await _persistPaper();
+      final range = pass.walkedMarket ? ' · listed ${pass.rangeLabel}' : '';
       _log('scan',
-          'manual scan complete · ${merged.length} symbols · source=${out.dataSourceId}');
+          'manual scan complete · ${merged.length} symbols$range · source=${out.dataSourceId}');
     } catch (e) {
       lastError = '$e';
       _log('error', 'scan failed: $e');

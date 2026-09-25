@@ -322,6 +322,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    _switchRow(
+                      'Scan the listed market',
+                      'The watchlist is not a lock. Each pass charts the watchlist '
+                          'plus the next listed US stocks and ETFs. A phone cannot '
+                          'chart every name in one minute. OTC names are not included. '
+                          'This does not guarantee a profit.',
+                      s.scanListedMarket,
+                      (v) {
+                        setState(() => s.scanListedMarket = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Names here are checked every pass. Add a symbol you want watched even before the market walk reaches it.',
+                      style: TextStyle(
+                        color: TrTheme.textMuted,
+                        fontSize: 11.5,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,

@@ -49,6 +49,7 @@ class AppSettings {
     this.keepRunningWhenClosed = true,
     this.engineArmed = false,
     this.useNews = true,
+    this.scanListedMarket = true,
   })  : keys = keys ?? const TradingKeys(keyId: '', secretKey: ''),
         watchlist = watchlist ?? List<String>.from(defaultWatchlist),
         risk = risk ?? const RiskConfig(),
@@ -128,6 +129,10 @@ class AppSettings {
   /// remove the risk of a loss.
   bool useNews;
 
+  /// Walk the listed US market in addition to [watchlist]. The watchlist is
+  /// still checked every pass. This is not a download of every chart at once.
+  bool scanListedMarket;
+
   bool get liveTrading => brokerMode == BrokerMode.live && keys.isConfigured;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -158,6 +163,7 @@ class AppSettings {
         'keepRunningWhenClosed': keepRunningWhenClosed,
         'engineArmed': engineArmed,
         'useNews': useNews,
+        'scanListedMarket': scanListedMarket,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -228,6 +234,8 @@ class AppSettings {
           defaults.keepRunningWhenClosed,
       engineArmed: json['engineArmed'] as bool? ?? defaults.engineArmed,
       useNews: json['useNews'] as bool? ?? defaults.useNews,
+      scanListedMarket:
+          json['scanListedMarket'] as bool? ?? defaults.scanListedMarket,
     );
   }
 }

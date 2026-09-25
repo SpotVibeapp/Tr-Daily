@@ -136,7 +136,9 @@ class _EmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Tap sync to scan ${state.settings.watchlist.join(', ')}',
+            state.settings.scanListedMarket
+                ? 'Tap sync to scan the watchlist and the next listed names.'
+                : 'Tap sync to scan ${state.settings.watchlist.join(', ')}',
             textAlign: TextAlign.center,
             style: const TextStyle(color: TrTheme.textMuted, fontSize: 13),
           ),

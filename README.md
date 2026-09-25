@@ -27,7 +27,7 @@ default**, with live trading as an explicit, confirmed opt-in.
 | **Risk manager** | ATR stop/target, % risking per trade, position/exposure caps, min-confidence gate, **daily-loss circuit breaker** that halts trading |
 | **Broker abstraction** | `PaperBroker` (instant local simulation w/ slippage) and `AlpacaBroker` (free commission-free US stocks, paper + live) |
 | **Backtester** | Strict no-lookahead: signals on bar close, fills at next open, intrabar stops, gap-aware. Metrics: return, win rate, profit factor, max DD, Sharpe, expectancy, buy & hold comparison |
-| **Engine** | Periodic scan → score → risk-check → execute → manage exits, during market hours (9:30–16:00 ET, holidays & early closes handled) |
+| **Engine** | Periodic scan of the watchlist plus a walking pass through listed US stocks → score → risk-check → execute → manage exits. The watchlist is not a lock. Not every chart every minute, and not OTC. |
 | **Notifications** | In-app notification center + 100% free remote phone push via Discord webhooks and Telegram bots on fills, stops, and halts |
 | **Portfolio** | Asset allocation breakdown, visual capital progress bar, live P&L, stop/target tracking, and round-trip trade performance history |
 | **24/7 Cloud** | Headless server runtime (`bin/tr_daily_server.dart`), Docker container (~30MB), systemd service, and HTTP healthcheck (:8080) |
@@ -139,6 +139,8 @@ Phased plan in [docs/ROADMAP.md](docs/ROADMAP.md):
 ## Phone install
 
 Sideload `artifacts/apk/Tr-Daily-v*-arm64-v8a.apk` (about 19 MB). Use the raw file, not the GitHub preview page. If tapping Install leaves the old app in place, uninstall Tr-Daily once and install again. Builds before v0.1.9 were each signed with a different key, so Android will not update them. Uninstalling removes on-phone settings and the paper log. It does not close positions at the broker.
+
+v0.1.10 walks the listed US market. The watchlist is still checked every pass, but a stock does not have to be on it to be traded. The phone charts a slice each pass so the scan can finish.
 
 ## Development
 
