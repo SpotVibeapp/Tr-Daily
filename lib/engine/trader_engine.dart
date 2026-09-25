@@ -6,6 +6,7 @@ import '../broker/paper_broker.dart';
 import '../core/config.dart';
 import '../core/pdt.dart';
 import '../core/time.dart';
+import 'cost_gate.dart';
 import 'day_trade.dart';
 import 'scale.dart';
 import '../data/market_data_source.dart';
@@ -113,6 +114,9 @@ class TraderEngine {
 
   /// Orders awaiting confirmation (fill reconciliation).
   final Map<String, Order> _pendingOrders = <String, Order>{};
+
+  /// Bid/ask read for the current scan. Not a guess when a name is missing.
+  final Map<String, BidAsk> _quotes = <String, BidAsk>{};
 
   bool get isRunning => state == EngineState.running || state == EngineState.starting;
 
@@ -324,6 +328,11 @@ class TraderEngine {
 
       final positions = await broker.getPositions();
       await _reviewNews(signals, positions, now);
+      await _loadQuotes(<String>[
+        ...settings.watchlist,
+        for (final position in positions) position.symbol,
+        for (final signal in signals) signal.symbol,
+      ]);
 
       // 3) Daily-loss stop. A profit goal is not a stop and must not halt.
       var closedForLoss = false;
@@ -338,7 +347,7 @@ class TraderEngine {
                 'the next session. Scanning continues. ${risk.haltReason ?? ''}',
           );
           for (final p in positions) {
-            await _safe(() => broker.closePosition(p.symbol));
+            await _sendExit(p, now, reason: 'daily loss stop');
           }
           closedForLoss = true;
         }
@@ -741,12 +750,31 @@ class TraderEngine {
               .floorToDouble()
               .clamp(1.0, p.qty - 1);
           try {
-            await broker.submitOrder(OrderRequest(
+            final request = sessionOrder(
               symbol: p.symbol,
               side: long ? OrderSide.sell : OrderSide.buy,
-              type: OrderType.market,
               qty: part,
-            ));
+              regularSession: isMarketOpen(_clock()),
+              quote: _quotes[p.symbol.toUpperCase()],
+              allowOutside: _allowLimitOutside(_clock()),
+              extendedHours:
+                  settings.extendedHours && isExtendedSession(_clock()),
+            );
+            if (request == null) {
+              _noteOnce(
+                _clock(),
+                'No market scale-out for ${p.symbol}. The regular session is '
+                    'closed, and there was no bid/ask for a limit.',
+                notedDay: true,
+              );
+              continue;
+            }
+            final order = await broker.submitOrder(request);
+            if (request.type == OrderType.limit &&
+                order.filledQty <= 0 &&
+                broker is PaperBroker) {
+              continue;
+            }
             meta.scaledOut = true;
             _emit('trade',
                 'SCALE-OUT ${part.toStringAsFixed(0)}/${p.qty.toStringAsFixed(0)} '
@@ -782,14 +810,91 @@ class TraderEngine {
   }
 
   Future<void> _close(Position p, String reason, {PositionMeta? meta}) async {
+    await _sendExit(p, _clock(), reason: reason);
+  }
+
+  bool _allowLimitOutside(DateTime now) {
+    if (isMarketOpen(now)) return false;
+    if (settings.extendedHours && isExtendedSession(now)) return true;
+    return settings.tradeWhileClosed && broker.mode != BrokerMode.live;
+  }
+
+  Future<void> _loadQuotes(List<String> symbols) async {
+    _quotes.clear();
+    final wanted = symbols
+        .map((s) => s.toUpperCase())
+        .where((s) => s.isNotEmpty)
+        .toSet()
+        .toList();
+    if (wanted.isEmpty) return;
     try {
-      await broker.closePosition(p.symbol);
+      _quotes.addAll(await source.getQuotes(wanted));
+    } catch (e) {
+      _emit('info', 'Spread quotes were not readable: $e');
+    }
+  }
+
+  /// Regular session uses the broker close, which is a market order.
+  /// Outside that session a market order is not sent. A limit is used only
+  /// when a real bid/ask exists and the session can still take an order.
+  Future<bool> _sendExit(
+    Position p,
+    DateTime now, {
+    required String reason,
+  }) async {
+    final side = p.short ? OrderSide.buy : OrderSide.sell;
+    final request = sessionOrder(
+      symbol: p.symbol,
+      side: side,
+      qty: p.qty,
+      regularSession: isMarketOpen(now),
+      quote: _quotes[p.symbol.toUpperCase()],
+      allowOutside: _allowLimitOutside(now),
+      extendedHours: settings.extendedHours && isExtendedSession(now),
+    );
+    if (request == null) {
+      _noteOnce(
+        now,
+        'No market order for ${p.symbol}. The regular session is closed, and '
+            'there was no bid/ask for a limit. The position stays open. '
+            'This is not a guarantee.',
+        notedDay: true,
+      );
+      return false;
+    }
+    try {
+      if (request.type == OrderType.market) {
+        await broker.closePosition(p.symbol);
+      } else {
+        final order = await broker.submitOrder(request);
+        if (order.filledQty <= 0 && broker is PaperBroker) {
+          _noteOnce(
+            now,
+            '${p.symbol}: limit close at \$${request.limitPrice!.toStringAsFixed(2)} '
+                'was not filled. No market order was sent.',
+            notedDay: true,
+          );
+          return false;
+        }
+        _emit(
+          'exit',
+          'LIMIT close ${p.symbol} at \$${request.limitPrice!.toStringAsFixed(2)} '
+              '— $reason. Not a market order.',
+          symbol: p.symbol,
+        );
+        _meta.remove(p.symbol);
+        return true;
+      }
       _meta.remove(p.symbol);
-      _emit('exit',
-          'CLOSED ${p.symbol} ${p.short ? 'short' : 'long'} — $reason',
-          symbol: p.symbol);
+      _emit(
+        'exit',
+        'CLOSED ${p.symbol} ${p.short ? 'short' : 'long'} — $reason',
+        symbol: p.symbol,
+      );
+      return true;
     } catch (e) {
       _emit('error', 'failed to close ${p.symbol}: $e');
+      return false;
     }
   }
 
@@ -849,18 +954,57 @@ class TraderEngine {
     // Prefer ensemble ATR-based stops when present.
     final stopPx = sig.suggestedStop ?? verdict.stopPrice;
     final targetPx = sig.suggestedTarget ?? verdict.targetPrice;
+    final quote = _quotes[sig.symbol.toUpperCase()];
+    final spreadSkip = spreadSkipReason(
+      quote: quote,
+      price: sig.price,
+      targetPrice: targetPx,
+      maxSpreadOfTarget: settings.risk.maxSpreadOfTarget,
+    );
+    if (spreadSkip != null) {
+      _noteOnce(now, 'skip ${sig.symbol}: $spreadSkip', notedDay: true);
+      return;
+    }
+
+    final regular = isMarketOpen(now);
+    final side = entrySide == Stance.long ? OrderSide.buy : OrderSide.sell;
+    final isLive = broker.mode == BrokerMode.live;
+    final request = sessionOrder(
+      symbol: sig.symbol,
+      side: side,
+      qty: qty,
+      regularSession: regular,
+      quote: quote,
+      allowOutside: _allowLimitOutside(now),
+      extendedHours: settings.extendedHours && isExtendedSession(now),
+      takeProfit: isLive && regular && !settings.risk.letWinnersRun
+          ? targetPx
+          : null,
+      stopLoss: isLive && regular ? stopPx : null,
+    );
+    if (request == null) {
+      _noteOnce(
+        now,
+        'No market order for ${sig.symbol}. The regular session is closed, '
+            'and there was no bid/ask for a limit.',
+        notedDay: true,
+      );
+      return;
+    }
 
     try {
-      final isLive = broker.mode == BrokerMode.live;
-      final order = await broker.submitOrder(OrderRequest(
-        symbol: sig.symbol,
-        side: entrySide == Stance.long ? OrderSide.buy : OrderSide.sell,
-        type: OrderType.market,
-        qty: qty,
-        takeProfit: isLive && !settings.risk.letWinnersRun ? targetPx : null,
-        stopLoss: isLive ? stopPx : null,
-        extendedHours: settings.extendedHours,
-      ));
+      final order = await broker.submitOrder(request);
+      if (request.type == OrderType.limit &&
+          order.filledQty <= 0 &&
+          broker is PaperBroker) {
+        _noteOnce(
+          now,
+          '${sig.symbol}: limit at \$${request.limitPrice!.toStringAsFixed(2)} '
+              'was not filled. No market order was sent.',
+          notedDay: true,
+        );
+        return;
+      }
 
       // Anchor management state at entry.
       final entryAtr = atr ?? sig.price * 0.01;
@@ -871,9 +1015,12 @@ class TraderEngine {
         peak: sig.price,
       );
 
+      final priceNote = request.type == OrderType.limit
+          ? 'limit \$${request.limitPrice!.toStringAsFixed(2)}'
+          : '~\$${sig.price.toStringAsFixed(2)}';
       _emit('trade',
           '${entrySide == Stance.long ? 'BOUGHT' : 'SHORTED'} ${qty.toStringAsFixed(0)} '
-          '${sig.symbol} @ ~\$${sig.price.toStringAsFixed(2)} · score ${sig.scorePct} '
+          '${sig.symbol} @ $priceNote · score ${sig.scorePct} '
           'conf ${(sig.confidence * 100).round()}% · stop \$${stopPx?.toStringAsFixed(2)} '
           'target \$${targetPx?.toStringAsFixed(2)}'
           '${newsNote == null ? '' : ' · $newsNote'}',

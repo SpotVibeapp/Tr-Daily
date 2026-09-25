@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import '../core/secrets.dart';
+import '../engine/cost_gate.dart';
 import 'csv_parser.dart';
 import 'models.dart';
 
@@ -22,6 +23,20 @@ abstract class MarketDataSource {
 
   /// Last trade/close price if the source can provide it cheaply.
   Future<double?> getLastPrice(String symbol);
+
+  /// Latest bid and ask. The default is null: a source that cannot see a
+  /// quote must not invent a tight spread.
+  Future<BidAsk?> getQuote(String symbol) async => null;
+
+  /// Quotes for [symbols]. Missing names are omitted, not filled with a guess.
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async {
+    final out = <String, BidAsk>{};
+    for (final raw in symbols) {
+      final quote = await getQuote(raw);
+      if (quote != null && quote.usable) out[raw.toUpperCase()] = quote;
+    }
+    return out;
+  }
 }
 
 /// Thrown when a source cannot satisfy a request (network, quota, parsing).
@@ -155,6 +170,37 @@ class YahooFinanceSource implements MarketDataSource {
       }
     }
     return out;
+  }
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async {
+    final out = <String, BidAsk>{};
+    const width = 20;
+    for (var i = 0; i < symbols.length; i += width) {
+      final end = i + width > symbols.length ? symbols.length : i + width;
+      final slice = symbols.sublist(i, end);
+      final joined = slice.map((s) => s.toUpperCase()).join(',');
+      try {
+        final uri = Uri.parse(
+          'https://query1.finance.yahoo.com/v7/finance/quote?symbols=$joined',
+        );
+        final resp = await _client.get(uri, headers: <String, String>{
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+          'Accept': 'application/json',
+        }).timeout(const Duration(seconds: 12));
+        if (resp.statusCode != 200) continue;
+        out.addAll(parseYahooQuotes(jsonDecode(resp.body)));
+      } catch (_) {
+        // This batch failed. Other symbols can still be quoted.
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async {
+    final batch = await getQuotes(<String>[symbol]);
+    return batch[symbol.toUpperCase()];
   }
 
   Future<MapEntry<String, double>?> _quoteClose(String symbol) async {
@@ -301,6 +347,42 @@ class AlpacaDataSource implements MarketDataSource {
       return out;
     } catch (_) {
       return <String, double>{};
+    }
+  }
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async {
+    if (symbols.isEmpty) return <String, BidAsk>{};
+    try {
+      final joined = symbols.map((s) => s.toUpperCase()).join(',');
+      final uri = Uri.parse(
+        '$_base/v2/stocks/snapshots?symbols=$joined&feed=iex',
+      );
+      final resp = await _client
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 20));
+      if (resp.statusCode != 200) return <String, BidAsk>{};
+      return parseAlpacaQuotes(jsonDecode(resp.body));
+    } catch (_) {
+      return <String, BidAsk>{};
+    }
+  }
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async {
+    final uri = Uri.parse('$_base/v2/stocks/$symbol/quotes/latest?feed=iex');
+    try {
+      final resp = await _client
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 12));
+      if (resp.statusCode != 200) return null;
+      final root = jsonDecode(resp.body);
+      if (root is! Map) return null;
+      final quote = root['quote'];
+      if (quote is! Map) return null;
+      return BidAsk.tryMake(quote['bp'] as num?, quote['ap'] as num?);
+    } catch (_) {
+      return null;
     }
   }
 
@@ -478,5 +560,32 @@ class CompositeDataSource implements MarketDataSource {
       } catch (_) {}
     }
     return null;
+  }
+
+  @override
+  Future<Map<String, BidAsk>> getQuotes(List<String> symbols) async {
+    final pending = symbols.map((s) => s.toUpperCase()).toSet();
+    final out = <String, BidAsk>{};
+    for (final source in sources) {
+      if (pending.isEmpty) break;
+      try {
+        final batch = await source.getQuotes(pending.toList());
+        for (final entry in batch.entries) {
+          if (!entry.value.usable) continue;
+          final symbol = entry.key.toUpperCase();
+          out[symbol] = entry.value;
+          pending.remove(symbol);
+        }
+      } catch (_) {
+        // This source had no quotes. Try the next one.
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<BidAsk?> getQuote(String symbol) async {
+    final batch = await getQuotes(<String>[symbol]);
+    return batch[symbol.toUpperCase()];
   }
 }

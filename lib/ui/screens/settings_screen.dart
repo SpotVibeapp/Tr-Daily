@@ -578,7 +578,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     _switchRow(
                       'Extended-hours trading',
-                      'New trades can be sent from 4:00 a.m. to 8:00 p.m. ET, including live. Alpaca may still reject an order. Scanning continues outside that window.',
+                      'From 4:00 a.m. to 8:00 p.m. ET a new trade is a limit at the bid or ask, not a market order. If the quote is missing, or the spread is too wide, the order is not sent. Alpaca may still reject it.',
                       s.extendedHours,
                       (v) {
                         setState(() => s.extendedHours = v);
@@ -587,7 +587,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     _switchRow(
                       'Trade while market closed',
-                      'Paper only. Live does not invent fills outside the session. Scanning continues either way.',
+                      'Paper only. Still not a market order. A limit is used when a bid and ask exist. Live does not invent fills outside the session.',
                       s.tradeWhileClosed,
                       (v) {
                         setState(() => s.tradeWhileClosed = v);
@@ -635,7 +635,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Stop and profit points are customizable. They follow volatility (ATR), not a fixed percent. The daily goal is a milestone, not a cap and not a promise. Reaching it does not stop scanning or refuse more profit, and it does not increase size to chase it. The loss stop does halt the day.',
+                      'Stop and profit points are customizable. They follow volatility (ATR), not a fixed percent. A new trade is skipped when the bid-ask spread is a large part of the profit point, or when that quote cannot be read. Set the spread gate to Off only if you accept that risk. Outside the regular session the app does not send a market order. The daily goal is a milestone, not a cap and not a promise. Reaching it does not stop scanning or refuse more profit, and it does not increase size to chase it. The loss stop does halt the day.',
                       style: TextStyle(
                         color: TrTheme.textMuted,
                         fontSize: 12,
@@ -714,6 +714,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       (v) {
                         setState(() =>
                             s.risk = s.risk.copyWith(takeProfitAtrMult: v));
+                      },
+                      () => _save(silent: true),
+                    ),
+                    _sliderRow(
+                      'Spread gate',
+                      s.risk.maxSpreadOfTarget <= 0
+                          ? 'Off'
+                          : 'Skip at ${(s.risk.maxSpreadOfTarget * 100).round()}%',
+                      (s.risk.maxSpreadOfTarget * 100).clamp(0, 50).toDouble(),
+                      0,
+                      50,
+                      (v) {
+                        setState(() => s.risk = s.risk.copyWith(
+                            maxSpreadOfTarget: v.roundToDouble() / 100));
                       },
                       () => _save(silent: true),
                     ),

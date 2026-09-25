@@ -101,8 +101,12 @@ of profit.
   intrabar stops checked against high/low, same-bar stop+target → stop first,
   gap-through-stop fills at the worse open, slippage on every fill.
 - **Paper broker:** instant fills at last price ± slippage, no margin.
-- **Live:** market orders to Alpaca (raw fills, real spreads/latency — usually
-  *worse* than simulation).
+- **Live:** market orders to Alpaca during the regular session (raw fills, real
+  spreads/latency — usually *worse* than simulation). A new trade is skipped
+  when the bid-ask spread is 25% or more of the profit-point distance, or when
+  the quote cannot be read. Outside the regular session the app does not send
+  a market order. An extended-hours order is a limit at the bid or ask, or it
+  is not sent.
 
 ## 7. What this is NOT
 

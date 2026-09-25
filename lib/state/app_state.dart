@@ -11,10 +11,12 @@ import '../broker/paper_broker.dart';
 import '../core/config.dart';
 import '../core/notifications.dart';
 import '../core/secrets.dart';
+import '../core/time.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../engine/backtester.dart';
 import '../engine/budget.dart';
+import '../engine/cost_gate.dart';
 import '../engine/keep_alive_hooks.dart';
 import '../engine/scanner.dart';
 import '../engine/trader_engine.dart';
@@ -549,6 +551,45 @@ class AppState extends ChangeNotifier {
       return;
     }
     try {
+      final now = DateTime.now();
+      if (!isMarketOpen(now)) {
+        final held = positions
+            .where((p) => p.symbol.toUpperCase() == symbol.toUpperCase());
+        final position = held.isEmpty ? null : held.first;
+        if (position == null) {
+          lastError = 'No open position for $symbol';
+          _log('error', lastError!);
+          notifyListeners();
+          return;
+        }
+        final quotes = await dataSource.getQuotes(<String>[symbol]);
+        final request = sessionOrder(
+          symbol: position.symbol,
+          side: position.short ? OrderSide.buy : OrderSide.sell,
+          qty: position.qty,
+          regularSession: false,
+          quote: quotes[symbol.toUpperCase()],
+          allowOutside: (settings.extendedHours && isExtendedSession(now)) ||
+              (settings.tradeWhileClosed && broker.mode != BrokerMode.live),
+          extendedHours: settings.extendedHours && isExtendedSession(now),
+        );
+        if (request == null) {
+          lastError =
+              'No market order for $symbol. The regular session is closed, and there was no bid/ask for a limit.';
+          _log('info', lastError!);
+          notifyListeners();
+          return;
+        }
+        await broker.submitOrder(request);
+        _log(
+          'exit',
+          'Limit close sent for $symbol at \$${request.limitPrice!.toStringAsFixed(2)}. Not a market order.',
+        );
+        await refreshAccount();
+        await _persistPaper();
+        notifyListeners();
+        return;
+      }
       await broker.closePosition(symbol);
       _log('exit', 'manually closed position for $symbol');
       await refreshAccount();

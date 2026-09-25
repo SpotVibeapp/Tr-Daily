@@ -9,6 +9,7 @@ class RiskConfig {
     this.maxDailyLossPct = 2.0,
     this.dailyProfitGoalPct = 30.0,
     this.letWinnersRun = false,
+    this.maxSpreadOfTarget = 0.25,
     this.stopLossAtrMult = 1.5,
     this.takeProfitAtrMult = 2.5,
     this.minConfidenceToTrade = 0.35,
@@ -41,6 +42,10 @@ class RiskConfig {
   /// trade, so a further move can stay open.
   final bool letWinnersRun;
 
+  /// Skip a new trade when the bid-ask spread is at least this fraction of
+  /// the profit-point distance. 0 disables the gate.
+  final double maxSpreadOfTarget;
+
   final double stopLossAtrMult;
   final double takeProfitAtrMult;
   final double minConfidenceToTrade;
@@ -70,6 +75,7 @@ class RiskConfig {
         'maxDailyLossPct': maxDailyLossPct,
         'dailyProfitGoalPct': dailyProfitGoalPct,
         'letWinnersRun': letWinnersRun,
+        'maxSpreadOfTarget': maxSpreadOfTarget,
         'stopLossAtrMult': stopLossAtrMult,
         'takeProfitAtrMult': takeProfitAtrMult,
         'minConfidenceToTrade': minConfidenceToTrade,
@@ -97,6 +103,8 @@ class RiskConfig {
       dailyProfitGoalPct: (json['dailyProfitGoalPct'] as num?)?.toDouble() ??
           d.dailyProfitGoalPct,
       letWinnersRun: json['letWinnersRun'] as bool? ?? d.letWinnersRun,
+      maxSpreadOfTarget: (json['maxSpreadOfTarget'] as num?)?.toDouble() ??
+          d.maxSpreadOfTarget,
       stopLossAtrMult:
           (json['stopLossAtrMult'] as num?)?.toDouble() ?? d.stopLossAtrMult,
       takeProfitAtrMult:
@@ -131,6 +139,7 @@ class RiskConfig {
     double? maxDailyLossPct,
     double? dailyProfitGoalPct,
     bool? letWinnersRun,
+    double? maxSpreadOfTarget,
     double? stopLossAtrMult,
     double? takeProfitAtrMult,
     double? minConfidenceToTrade,
@@ -150,6 +159,7 @@ class RiskConfig {
         maxDailyLossPct: maxDailyLossPct ?? this.maxDailyLossPct,
         dailyProfitGoalPct: dailyProfitGoalPct ?? this.dailyProfitGoalPct,
         letWinnersRun: letWinnersRun ?? this.letWinnersRun,
+        maxSpreadOfTarget: maxSpreadOfTarget ?? this.maxSpreadOfTarget,
         stopLossAtrMult: stopLossAtrMult ?? this.stopLossAtrMult,
         takeProfitAtrMult: takeProfitAtrMult ?? this.takeProfitAtrMult,
         minConfidenceToTrade: minConfidenceToTrade ?? this.minConfidenceToTrade,

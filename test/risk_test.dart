@@ -236,6 +236,7 @@ void main() {
       final back = RiskConfig.fromJson(const <String, dynamic>{});
       expect(back.dailyProfitGoalPct, 30);
       expect(back.letWinnersRun, isFalse);
+      expect(back.maxSpreadOfTarget, 0.25);
       expect(back.maxDailyLossPct, 2);
       final kept = back.copyWith(maxDailyLossPct: 4);
       expect(kept.dailyProfitGoalPct, 30);
