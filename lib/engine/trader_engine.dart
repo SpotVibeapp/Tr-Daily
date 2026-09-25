@@ -4,10 +4,11 @@ import 'dart:convert';
 import '../broker/alpaca_broker.dart';
 import '../broker/paper_broker.dart';
 import '../core/config.dart';
-import '../core/pdt.dart';
 import '../core/time.dart';
 import 'cost_gate.dart';
 import 'day_trade.dart';
+import 'fill_model.dart';
+import 'liquidity.dart';
 import 'scan_quality.dart';
 import 'scale.dart';
 import '../data/market_data_source.dart';
@@ -433,14 +434,6 @@ class TraderEngine {
         _noteOnce(
           now,
           'No new entries — last 15 minutes, flattening day trades',
-          notedDay: true,
-        );
-      } else if (plan.pdtBlocked) {
-        _noteOnce(
-          now,
-          'No new entries — ${plan.dayTradeCount} day trades in 5 business '
-              'days, and today\'s start is under \$25,000. Full day trading '
-              'turns on at \$25,000. Open positions are still managed.',
           notedDay: true,
         );
       } else if (!allowEntries) {
@@ -909,6 +902,9 @@ class TraderEngine {
     } catch (e) {
       _emit('info', 'Spread quotes were not readable: $e');
     }
+    // Paper fills pay the ask and get the bid, like a real market order.
+    final b = broker;
+    if (b is PaperBroker) b.setQuotes(_quotes);
   }
 
   /// Regular session uses the broker close, which is a market order.
@@ -943,6 +939,10 @@ class TraderEngine {
       if (request.type == OrderType.market) {
         await broker.closePosition(p.symbol);
       } else {
+        // The entry's stop and target are good-till-cancelled and hold the
+        // shares. Free them so the limit close is accepted.
+        final b = broker;
+        if (b is AlpacaBroker) await b.cancelOpenOrdersFor(p.symbol);
         final order = await broker.submitOrder(request);
         if (order.filledQty <= 0 && broker is PaperBroker) {
           _noteOnce(
@@ -976,26 +976,7 @@ class TraderEngine {
   }
 
   ScalePlan _planFor(AccountInfo account, DateTime now) {
-    return scalePlan(
-      account: account,
-      settings: settings,
-      dayTradeCount: _dayTradeCount(account, now),
-    );
-  }
-
-  int _dayTradeCount(AccountInfo account, DateTime now) {
-    if (broker is PaperBroker) {
-      final fills = (broker as PaperBroker).fills;
-      return estimatePaperPdt(
-        fills: [
-          for (final f in fills)
-            (symbol: f.symbol, time: f.time, isBuy: f.side == OrderSide.buy),
-        ],
-        equity: dayStartEquityOf(account),
-        now: now,
-      ).dayTradeCount;
-    }
-    return account.dayTradeCount;
+    return scalePlan(account: account, settings: settings);
   }
 
   Future<void> _tryEnter(
@@ -1009,6 +990,17 @@ class TraderEngine {
     String? newsNote,
   }) async {
     final entrySide = side ?? sig.stance;
+    final thin = liquiditySkipReason(
+      price: sig.price,
+      sessionDollarVolume: sig.sessionDollarVolume,
+      sourceId: sig.sourceId,
+      minSharePrice: settings.minSharePrice,
+      minDollarVolume: settings.minDollarVolume,
+    );
+    if (thin != null) {
+      _noteOnce(now, 'skip ${sig.symbol}: $thin', notedDay: true);
+      return;
+    }
     final atr = _atrFromSignal(sig);
     final verdict = risk.entry(
       account: account,
@@ -1105,11 +1097,33 @@ class TraderEngine {
           signal: sig,
           symbol: sig.symbol);
 
+      // Compare the fill with the price the signal saw, so live costs can be
+      // checked against paper.
+      final filledAt = order.filledAvgPrice;
+      if (order.status == OrderStatus.filled && filledAt != null) {
+        _emit(
+          'info',
+          fillCostNote(
+            symbol: sig.symbol,
+            isBuy: orderSide == OrderSide.buy,
+            qty: order.filledQty > 0 ? order.filledQty : qty,
+            expected: sig.price,
+            filled: filledAt,
+          ),
+          symbol: sig.symbol,
+        );
+      }
+
       // Reconcile the order asynchronously: market orders usually fill fast,
       // but queues/rejections must surface, not vanish.
       if (!order.isDone || order.status != OrderStatus.filled) {
         _pendingOrders[order.id] = order;
-        unawaited(_watchOrder(order, sig.symbol));
+        unawaited(_watchOrder(
+          order,
+          sig.symbol,
+          expectedPrice: sig.price,
+          isBuy: orderSide == OrderSide.buy,
+        ));
       }
     } catch (e) {
       _emit('error', 'order failed for ${sig.symbol}: $e');
@@ -1117,7 +1131,12 @@ class TraderEngine {
   }
 
   /// Poll [order] until it reaches a terminal state (or times out).
-  Future<void> _watchOrder(Order order, String symbol) async {
+  Future<void> _watchOrder(
+    Order order,
+    String symbol, {
+    double? expectedPrice,
+    bool isBuy = true,
+  }) async {
     const maxAttempts = 15;
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
       await Future<void>.delayed(const Duration(seconds: 2));
@@ -1137,6 +1156,20 @@ class TraderEngine {
           _emit('trade', 'FILLED $symbol ${fresh.filledQty.toStringAsFixed(0)} '
               '@ \$${fresh.filledAvgPrice?.toStringAsFixed(2)}',
               symbol: symbol);
+          final filledAt = fresh.filledAvgPrice;
+          if (expectedPrice != null && filledAt != null) {
+            _emit(
+              'info',
+              fillCostNote(
+                symbol: symbol,
+                isBuy: isBuy,
+                qty: fresh.filledQty,
+                expected: expectedPrice,
+                filled: filledAt,
+              ),
+              symbol: symbol,
+            );
+          }
           return;
         }
         if (fresh.status == OrderStatus.canceled ||

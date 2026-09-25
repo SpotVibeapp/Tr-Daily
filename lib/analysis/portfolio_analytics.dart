@@ -217,7 +217,18 @@ class PortfolioPerformance {
     // Map symbol to FIFO entries: list of (qty, price, time, side).
     final openLots = <String, List<_Lot>>{};
 
-    for (final fill in fills) {
+    // Lots only pair up correctly oldest-first. Callers pass the trade log
+    // newest-first, which turned every round trip around (exit before
+    // entry). Sort by time, keeping the given order for equal times.
+    final indexed = <(int, PaperFill)>[
+      for (var i = 0; i < fills.length; i++) (i, fills[i]),
+    ]..sort((a, b) {
+        final byTime = a.$2.time.compareTo(b.$2.time);
+        return byTime != 0 ? byTime : a.$1.compareTo(b.$1);
+      });
+    final chronological = [for (final e in indexed) e.$2];
+
+    for (final fill in chronological) {
       final sym = fill.symbol.toUpperCase();
       final lots = openLots.putIfAbsent(sym, () => <_Lot>[]);
 

@@ -50,6 +50,8 @@ class AppSettings {
     this.engineArmed = false,
     this.useNews = true,
     this.scanListedMarket = true,
+    this.minSharePrice = 1.0,
+    this.minDollarVolume = 1000000,
   })  : keys = keys ?? const TradingKeys(keyId: '', secretKey: ''),
         watchlist = watchlist ?? List<String>.from(defaultWatchlist),
         risk = risk ?? const RiskConfig(),
@@ -133,6 +135,22 @@ class AppSettings {
   /// still checked every pass. This is not a download of every chart at once.
   bool scanListedMarket;
 
+  /// New trades skip stocks under this share price. 0 turns it off.
+  double minSharePrice;
+
+  /// New trades skip stocks with less than this many dollars traded in a
+  /// regular session (estimated from recent bars). On Alpaca's free IEX feed
+  /// the floor is scaled down to IEX's share of volume. 0 turns it off.
+  double minDollarVolume;
+
+  /// Bumped when a default changes in a way saved settings should pick up.
+  /// v2: risk per trade 0.75% → 0.5%, max open positions 3 → 1.
+  static const int currentDefaultsVersion = 2;
+
+  /// True when [AppSettings.fromJson] moved old defaults to new ones. Not
+  /// saved; the app logs it once and writes the upgraded settings.
+  bool upgradedDefaults = false;
+
   bool get liveTrading => brokerMode == BrokerMode.live && keys.isConfigured;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -164,6 +182,9 @@ class AppSettings {
         'engineArmed': engineArmed,
         'useNews': useNews,
         'scanListedMarket': scanListedMarket,
+        'minSharePrice': minSharePrice,
+        'minDollarVolume': minDollarVolume,
+        'defaultsVersion': currentDefaultsVersion,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -175,7 +196,12 @@ class AppSettings {
     final ensJson = json['ensemble'];
     final notifJson = json['notifications'];
     final ivName = json['interval'] as String?;
-    return AppSettings(
+    final version = (json['defaultsVersion'] as num?)?.toInt() ?? 1;
+    final savedRisk = riskJson is Map<String, dynamic>
+        ? RiskConfig.fromJson(riskJson)
+        : defaults.risk;
+    final risk = version < 2 ? upgradeRiskDefaultsV2(savedRisk) : savedRisk;
+    final settings = AppSettings(
       brokerMode: modeName == 'live' ? BrokerMode.live : BrokerMode.paper,
       keys: TradingKeys(
         keyId: json['keyId'] as String? ?? '',
@@ -201,9 +227,7 @@ class AppSettings {
       startEngineOnLaunch:
           json['startEngineOnLaunch'] as bool? ?? defaults.startEngineOnLaunch,
       extendedHours: json['extendedHours'] as bool? ?? defaults.extendedHours,
-      risk: riskJson is Map<String, dynamic>
-          ? RiskConfig.fromJson(riskJson)
-          : defaults.risk,
+      risk: risk,
       ensemble: ensJson is Map<String, dynamic>
           ? EnsembleConfig.fromJson(ensJson)
           : defaults.ensemble,
@@ -236,6 +260,29 @@ class AppSettings {
       useNews: json['useNews'] as bool? ?? defaults.useNews,
       scanListedMarket:
           json['scanListedMarket'] as bool? ?? defaults.scanListedMarket,
+      minSharePrice: (json['minSharePrice'] as num?)?.toDouble() ??
+          defaults.minSharePrice,
+      minDollarVolume: (json['minDollarVolume'] as num?)?.toDouble() ??
+          defaults.minDollarVolume,
     );
+    settings.upgradedDefaults =
+        version < currentDefaultsVersion && !identical(risk, savedRisk);
+    return settings;
   }
+}
+
+/// Move the v1 risk defaults to v2 without touching values the user chose.
+/// Only a value still equal to the old default is replaced. Returns [risk]
+/// itself when nothing changed.
+RiskConfig upgradeRiskDefaultsV2(RiskConfig risk) {
+  const oldRiskPerTrade = 0.75;
+  const oldMaxPositions = 3;
+  const fresh = RiskConfig();
+  final moveRisk = (risk.riskPerTradePct - oldRiskPerTrade).abs() < 1e-9;
+  final movePositions = risk.maxOpenPositions == oldMaxPositions;
+  if (!moveRisk && !movePositions) return risk;
+  return risk.copyWith(
+    riskPerTradePct: moveRisk ? fresh.riskPerTradePct : null,
+    maxOpenPositions: movePositions ? fresh.maxOpenPositions : null,
+  );
 }

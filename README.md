@@ -58,6 +58,13 @@ your working tree, so the analyzer and `flutter test` still see it until you
 delete it. It comes back only if a later `flutter create .` scaffolds a file that
 is missing again.
 
+**Android minSdk:** broker keys are kept in the Android Keystore through
+`flutter_secure_storage`, which needs Android 6.0 (API 23). If `flutter run`
+reports a minSdk error, open `android/app/build.gradle.kts` and change
+`minSdk = flutter.minSdkVersion` to `minSdk = maxOf(flutter.minSdkVersion, 23)`
+(Groovy `build.gradle`: `minSdkVersion Math.max(flutter.minSdkVersion, 23)`).
+The release APK workflow does this for you.
+
 Then in the app:
 
 1. **Dashboard → engine switch** starts paper auto-trading immediately (no keys needed).
@@ -66,7 +73,7 @@ Then in the app:
 4. **Settings** lets you change the watchlist, intervals, risk, and data provider.
 5. **Small account:** Fit-to-cash is on by default. If one share of the watchlist costs more than 25% of equity, those names are skipped and the engine scans listed stocks that fit, preferring about $5 and under.
 6. **Test any paper balance:** Settings → Paper account. Pick $100, $1,000, $25,000, or type an amount, then Set paper cash. That replaces the local simulator only. Alpaca funds are not changed. Turn live mode off first.
-7. **Scale with the day's start:** Size follows the equity the session started with, so a gain or a setback changes the next session instead of freezing the app in a small-account habit. At $25,000 and above, full day trading is available. Below that, a 4th day trade in 5 business days is skipped. Lower-priced names stay in the scan when the balance is high. A strong setup may use up to 2× the risk setting. Overnight holds are optional and off by default. This does not guarantee a profit, and options are not traded.
+7. **Scale with the day's start:** Size follows the equity the session started with, so a gain or a setback changes the next session instead of freezing the app in a small-account habit. Day trades are not capped by count (FINRA retired the pattern-day-trader rule on June 4, 2026). Lower-priced names stay in the scan when the balance is high. A strong setup may use up to 2× the risk setting. Overnight holds are optional and off by default. This does not guarantee a profit, and options are not traded.
 8. **Day trades, not holds:** Settings → Day trade skips quiet names whose target is under 1% of the share price, and skips a share that would risk more than the risk setting allows. Open positions are sold in the last 15 minutes unless overnight holds are on. This does not guarantee a profit.
 9. **Leave or close the app:** On Android, start the engine and leave “Keep running when closed” on. This is the same for paper and live. A notification stays up and the scan continues if you leave the app, lock the screen, or swipe it away. Live orders can still be sent until you turn the engine off or tap Stop on the notification. Force Stop in Android settings stops it. The phone being off stops it. A closed market does not stop the scan. New live trades wait for the regular session, or 4:00 a.m.–8:00 p.m. ET if extended hours are on. This does not guarantee a profit.
 10. **News on every scan:** Company headlines and world news are read before a new trade and again while a position is open. A severe, recent company story can block a new trade or close that name. If headlines for a name cannot be read, a new trade in that name waits. Stories that are building before the chart confirms are listed as developing. They are not automatic buys. Headlines can be late, missing, or wrong. This does not remove the risk of a loss, and it does not guarantee a profit.
@@ -101,12 +108,15 @@ imports**, so it can later be reused by a CLI or a server deployment unchanged.
 ## Connecting a real account (when you're ready)
 
 **The app never asks for bank credentials.** Bank linking always happens on the
-broker's website; Tr-Daily only stores an API key pair on your device.
+broker's website; Tr-Daily only stores an API key pair on your device, in
+the platform's encrypted store (Android Keystore), not in the settings file.
 
 1. Create a free account at [alpaca.markets](https://alpaca.markets) and link
    your bank in **their** dashboard (they use Plaid — same infra as Venmo).
 2. Generate **paper** keys first → paste into *Settings → Broker* → Connect.
-3. Run paper mode for weeks. Review the trade log honestly.
+3. Run paper mode for weeks. Review the trade log honestly. *Portfolio →
+   Performance → Ready for live?* checks for at least 50 trades, a positive
+   average trade after costs, profit factor ≥ 1.2 and drawdown ≤ 15%.
 4. When (and only when) you're satisfied, generate **live** keys, switch to LIVE
    (requires typing `TRADE REAL MONEY`), and start small.
 

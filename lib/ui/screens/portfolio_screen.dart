@@ -7,6 +7,7 @@ import '../../engine/trader_engine.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/readiness_panel.dart';
 import 'chart_screen.dart';
 import 'home_shell.dart';
 
@@ -801,6 +802,28 @@ class _PerformanceTabState extends State<_PerformanceTab> {
 
     return ListView(
       children: [
+        // ---- Go-live checks ----
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: _cardBox(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'READY FOR LIVE?',
+                style: TextStyle(
+                  color: TrTheme.textMuted,
+                  fontSize: 10,
+                  letterSpacing: 1.1,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ReadinessPanel(readiness: widget.state.liveReadiness),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
         // ---- Analytics Overview Card ----
         Container(
           padding: const EdgeInsets.all(16),

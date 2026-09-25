@@ -1,5 +1,4 @@
 import '../core/config.dart';
-import '../core/pdt.dart';
 import '../data/models.dart';
 import '../risk/risk_manager.dart';
 
@@ -8,7 +7,9 @@ import '../risk/risk_manager.dart';
 /// intraday swing.
 enum AccountBand { micro, building, fullDayTrade }
 
-/// Equity at which US pattern-day-trader limits no longer apply.
+/// Top sizing band. This used to be the pattern-day-trader line. FINRA
+/// retired that rule on June 4, 2026, and Alpaca no longer counts day trades,
+/// so no balance caps the number of day trades any more.
 const double fullDayTradeEquity = 25000;
 
 /// Below this, a short is skipped when fit-to-cash is on.
@@ -20,9 +21,6 @@ class ScalePlan {
     required this.dayStartEquity,
     required this.maxSharePrice,
     required this.allowShort,
-    required this.pdtApplies,
-    required this.pdtBlocked,
-    required this.dayTradeCount,
     required this.keepLowerPriced,
     required this.cheapCeiling,
     required this.opportunityCeiling,
@@ -33,9 +31,6 @@ class ScalePlan {
   final double dayStartEquity;
   final double maxSharePrice;
   final bool allowShort;
-  final bool pdtApplies;
-  final bool pdtBlocked;
-  final int dayTradeCount;
   final bool keepLowerPriced;
   final double cheapCeiling;
   final double opportunityCeiling;
@@ -94,7 +89,6 @@ double convictionRiskPct({
 ScalePlan scalePlan({
   required AccountInfo account,
   required AppSettings settings,
-  required int dayTradeCount,
 }) {
   final start = settings.scaleWithBalance
       ? dayStartEquityOf(account)
@@ -111,8 +105,6 @@ ScalePlan scalePlan({
     cheapCeiling: cheap,
     maxSharePrice: maxShare,
   );
-  final pdtApplies = settings.scaleWithBalance && start < fullDayTradeEquity;
-  final blocked = pdtApplies && dayTradeCount >= PdtSnapshot.limit;
   final allowShort = settings.allowShort &&
       settings.risk.allowShort &&
       !(settings.fitToBudget && start > 0 && start < shortEquityFloor);
@@ -124,19 +116,11 @@ ScalePlan scalePlan({
     dayStartEquity: start,
     maxSharePrice: maxShare,
     allowShort: allowShort,
-    pdtApplies: pdtApplies,
-    pdtBlocked: blocked,
-    dayTradeCount: dayTradeCount,
     keepLowerPriced: keepLower,
     cheapCeiling: cheap,
     opportunityCeiling: opp,
     summary: settings.scaleWithBalance
-        ? describeScale(
-            band: band,
-            dayStartEquity: start,
-            pdtBlocked: blocked,
-            dayTradeCount: dayTradeCount,
-          )
+        ? describeScale(band: band, dayStartEquity: start)
         : '',
   );
 }
@@ -144,8 +128,6 @@ ScalePlan scalePlan({
 String describeScale({
   required AccountBand band,
   required double dayStartEquity,
-  required bool pdtBlocked,
-  required int dayTradeCount,
 }) {
   final money = '\$${dayStartEquity.toStringAsFixed(0)}';
   final base = switch (band) {
@@ -157,18 +139,9 @@ String describeScale({
           'small-account habit. Lower-priced names stay in the scan beside '
           'names this account can afford.',
     AccountBand.fullDayTrade =>
-      'Today\'s start is $money. Full day trading is available, and '
-          'lower-priced names are still scanned when a higher percentage '
-          'looks better.',
+      'Today\'s start is $money. Lower-priced names are still scanned when '
+          'a higher percentage looks better.',
   };
-  if (band == AccountBand.fullDayTrade) {
-    return '$base This does not guarantee a profit.';
-  }
-  if (pdtBlocked) {
-    return '$base No new day trades — $dayTradeCount in 5 business days. '
-        'Full day trading starts when today\'s start is \$25,000. '
-        'This does not guarantee a profit.';
-  }
-  return '$base A 4th day trade in 5 business days is skipped until the '
-      'start is \$25,000. This does not guarantee a profit.';
+  return '$base Day trades are not capped by count. This does not '
+      'guarantee a profit.';
 }

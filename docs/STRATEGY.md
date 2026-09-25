@@ -59,17 +59,19 @@ confidence = 0.45·trendQuality + 0.30·|signal avg| + 0.15·ADX gate + ML certa
 
 | Control | Default | Meaning |
 |---|---|---|
-| Risk per trade | 0.75% of equity | Sized against the stop distance |
+| Risk per trade | 0.5% of equity | Sized against the stop distance. Installs still on the old 0.75% default move to 0.5%; a value you picked is kept. |
 | Stop loss | 1.5 × ATR | Where the thesis is wrong |
 | Take profit | 2.5 × ATR | ~1.67:1 reward-to-risk floor |
-| Max open positions | 3 | Concentration cap |
+| Max open positions | 1 | Concentration cap. One at a time while starting out. Old default of 3 moves to 1; a value you picked is kept. |
+| Min share price | $1.00 | No new trades under $1, where a 1¢ tick is a large percentage |
+| Min dollar volume | $1M a session | No new trades in thinly traded names. On Alpaca's free IEX feed the floor is scaled to IEX's ~2% share of volume. Held positions are still managed. |
 | Max exposure | 60% of equity | Gross cap |
 | Max position | 25% of equity | Single-name cap |
 | **Max daily loss** | **2%** | **Engine halts until next session** |
 | Min confidence | 35% | No low-conviction entries |
 | Fit to cash | on | Skip a name when 1 share exceeds 25% of equity or buying power. If the watchlist does not fit, scan listed names, preferring ≤ $5. Not OTC, not fractional shares of the big names. |
 | Day-trade edge | on, 1% target | Skip a setup whose target is under 1% of the share price, or whose forced 1-share size risks more than 2.5× the risk-per-trade setting. Flatten in the last 15 minutes so a day trade is not held overnight. Not a profit guarantee. |
-| Scale with balance | on | Size from the session's starting equity, not the intraday mark. Under $2,000: small-account range, no shorts. From $2,000 to $25,000: step up, and still scan lower-priced names. At $25,000: full day trading (no PDT entry cap). A strong target may use up to 2× the risk setting. Not a profit guarantee. Options are not traded. |
+| Scale with balance | on | Size from the session's starting equity, not the intraday mark. Under $2,000: small-account range, no shorts. From $2,000 to $25,000: step up, and still scan lower-priced names. At $25,000: top sizing band. A strong target may use up to 2× the risk setting. Not a profit guarantee. Options are not traded. |
 
 ## 5. Exit logic
 
@@ -86,23 +88,37 @@ never overwrite them — a stop sits where the thesis was invalidated, not
 5. Stance flips → close + attempt opposite entry (still risk-checked).
 6. Daily-loss breaker → flatten everything, halt, re-arm next day.
 
-## 5b. PDT awareness (Phase 2)
+## 5b. Day-trade count (removed)
 
-US pattern-day-trader rule: 4+ round trips in 5 business days without $25k
-equity. The dashboard shows a warning at 3 and a restriction banner at 4
-(broker-reported for live accounts, estimated from the paper fill log).
-Tr-Daily warns — the broker enforces. With scale-with-balance on, a new
-entry that would be a 4th day trade is also skipped when today's starting
-equity is under $25,000. At $25,000 and above that limit is not applied.
-That is not a promise the broker will accept the order, and not a promise
-of profit.
+FINRA retired the pattern-day-trader rule on June 4, 2026. Brokers no longer
+count day trades or require $25,000 to day trade; intraday margin rules apply
+instead (Alpaca: margin from $2,000). Tr-Daily no longer caps entries by day
+trade count, in paper or live. The broker still decides whether to accept an
+order.
+
+## 5c. Go-live checks
+
+Portfolio → Performance and the live-mode confirmation show whether the paper
+record meets four minimums: at least 50 completed paper trades, a positive
+average trade after costs, profit factor at least 1.2, and worst drawdown
+within 15%. They count the in-app paper account only. Passing them is not a
+forecast of live results.
 
 ## 6. Execution realism
 
 - **Backtest:** decisions at close of bar `t`, fills at **open of `t+1`**,
   intrabar stops checked against high/low, same-bar stop+target → stop first,
   gap-through-stop fills at the worse open, slippage on every fill.
-- **Paper broker:** instant fills at last price ± slippage, no margin.
+- **Costs:** a simulated market buy pays the ask and a sell gets the bid when
+  a quote is known. The cost floor is the larger of the slippage setting and
+  half a tick (½¢ on a stock over $1), so cheap stocks are not given
+  near-free fills. The backtester uses the same floor.
+- **Paper broker:** instant fills at those prices, no margin. Each fill logs
+  the price the signal saw and what the fill cost.
+- **Stops overnight:** a live entry's broker-side stop and target are sent
+  good-till-cancelled. If the app is closed before the end-of-day flatten, the
+  stop is still at the broker. Closing a position cancels that name's working
+  orders first.
 - **Live:** market orders to Alpaca during the regular session (raw fills, real
   spreads/latency — usually *worse* than simulation). A new trade is skipped
   when the bid-ask spread is 25% or more of the profit-point distance, or when

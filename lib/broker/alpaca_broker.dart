@@ -256,10 +256,48 @@ class AlpacaBroker implements Broker {
     await _req('DELETE', '/v2/orders/$orderId');
   }
 
+  /// Pause between cancelling a name's open orders and closing it. Alpaca
+  /// cancels asynchronously. Tests set this to zero.
+  Duration cancelSettle = const Duration(milliseconds: 600);
+
+  /// Cancel every open order for [symbol] and wait for the cancels to
+  /// settle. A bracket's stop and target legs hold the shares, and Alpaca
+  /// rejects a close while they are open ("insufficient qty available").
+  /// Other names' orders are left alone. Returns how many were cancelled.
+  Future<int> cancelOpenOrdersFor(String symbol) async {
+    final sym = symbol.toUpperCase();
+    var cancelled = 0;
+    try {
+      final open = await getOpenOrders();
+      for (final o in open) {
+        if (o.symbol.toUpperCase() != sym) continue;
+        try {
+          await cancelOrder(o.id);
+          cancelled++;
+        } catch (_) {
+          // Already filled or cancelled. Carry on with the rest.
+        }
+      }
+    } catch (_) {
+      // The order list could not be read. The caller tries anyway.
+    }
+    if (cancelled > 0 && cancelSettle > Duration.zero) {
+      await Future<void>.delayed(cancelSettle);
+    }
+    return cancelled;
+  }
+
   @override
   Future<void> closePosition(String symbol) async {
-    final uri = Uri.parse('$_base/v2/positions/$symbol');
-    final resp = await _client.delete(uri, headers: _headers).timeout(const Duration(seconds: 20));
+    final sym = symbol.toUpperCase();
+    final cancelled = await cancelOpenOrdersFor(sym);
+    final uri = Uri.parse('$_base/v2/positions/$sym');
+    var resp = await _client.delete(uri, headers: _headers).timeout(const Duration(seconds: 20));
+    if (resp.statusCode == 403 && cancelled > 0) {
+      // The cancels may still be settling. One more try.
+      await Future<void>.delayed(cancelSettle * 2);
+      resp = await _client.delete(uri, headers: _headers).timeout(const Duration(seconds: 20));
+    }
     if (resp.statusCode >= 400) {
       throw BrokerException('close failed: ${resp.body}',
           statusCode: resp.statusCode);

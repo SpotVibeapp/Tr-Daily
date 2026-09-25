@@ -153,11 +153,7 @@ void main() {
         scaleWithBalance: true,
       );
       final account = cash(25000);
-      final plan = scalePlan(
-        account: account,
-        settings: settings,
-        dayTradeCount: 0,
-      );
+      final plan = scalePlan(account: account, settings: settings);
       final advice = await session.advise(
         settings: settings,
         account: account,

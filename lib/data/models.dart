@@ -287,6 +287,7 @@ class SignalScore {
     this.breakdown = const <String, double>{},
     this.sourceId = '',
     this.lastBarAt,
+    this.sessionDollarVolume,
   });
 
   final String symbol;
@@ -315,11 +316,16 @@ class SignalScore {
   /// Time of the last bar used for this score.
   final DateTime? lastBarAt;
 
+  /// Estimated dollars traded in one regular session, from recent bars on
+  /// the feed that returned them. Null when unknown.
+  final double? sessionDollarVolume;
+
   int get scorePct => (score * 100).round().clamp(-100, 100);
 
   SignalScore copyWith({
     String? sourceId,
     DateTime? lastBarAt,
+    double? sessionDollarVolume,
   }) {
     return SignalScore(
       symbol: symbol,
@@ -335,6 +341,7 @@ class SignalScore {
       breakdown: breakdown,
       sourceId: sourceId ?? this.sourceId,
       lastBarAt: lastBarAt ?? this.lastBarAt,
+      sessionDollarVolume: sessionDollarVolume ?? this.sessionDollarVolume,
     );
   }
 

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import '../analysis/estimator.dart';
 import '../analysis/news_review.dart';
 import '../data/news_feed.dart';
+import '../analysis/live_readiness.dart';
+import '../analysis/portfolio_analytics.dart';
 import '../broker/alpaca_broker.dart';
 import '../broker/paper_broker.dart';
 import '../core/config.dart';
@@ -24,6 +26,7 @@ import '../engine/scanner.dart';
 import '../engine/trader_engine.dart';
 import '../risk/risk_manager.dart';
 import '../storage/local_store.dart';
+import '../storage/secret_vault.dart';
 import '../strategy/ensemble.dart';
 
 Future<String> _readListedSymbols() =>
@@ -40,11 +43,28 @@ class LogEntry {
 /// The single source of truth the UI observes. Owns settings, broker,
 /// scanner, engine, and persistence.
 class AppState extends ChangeNotifier {
-  AppState({KeyValueStore? store}) : this.withStore(store ?? MemoryStore());
+  AppState({KeyValueStore? store, SecretVault? vault})
+      : this.withStore(store ?? MemoryStore(), vault: vault);
 
-  AppState.withStore(KeyValueStore store) : _json = JsonStore(store);
+  AppState.withStore(KeyValueStore store, {SecretVault? vault})
+      : _json = JsonStore(store),
+        _vault = vault ?? StoreVault(store);
 
   late final JsonStore _json;
+
+  /// Broker keys live here, not in the settings file (see [SecretVault]).
+  final SecretVault _vault;
+
+  /// Last keys known to be in [_vault], to skip rewriting unchanged keys.
+  TradingKeys? _vaultedKeys;
+
+  /// True when the secure store failed and keys were kept in the settings
+  /// file instead, so the app keeps working.
+  bool keysInPlainFile = false;
+
+  /// The last vault read threw. Empty keys are then not written over it, so
+  /// one failed read cannot wipe keys that are still there.
+  bool _vaultUnreadable = false;
 
   late AppSettings settings;
   late Broker broker;
@@ -78,6 +98,9 @@ class AppState extends ChangeNotifier {
   bool scanning = false;
   String? lastError;
   BacktestResult? lastBacktest;
+
+  /// The same backtest with the ML layer off, when [lastBacktest] used it.
+  BacktestResult? lastBacktestNoMl;
   bool backtestRunning = false;
   String? backtestSymbol;
 
@@ -97,13 +120,22 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------------- init
 
   Future<void> init({bool launchEngine = true}) async {
-    final settingsJson = await _json.readObject(_kSettings);
+    final settingsJson = await _readSettingsJson();
     settings = settingsJson != null
         ? AppSettings.fromJson(settingsJson)
         : AppSettings();
     // Ensure a persisted snapshot exists so updateSettings can diff against it.
-    if (settingsJson == null) {
-      await _json.writeObject(_kSettings, settings.toJson());
+    if (settingsJson == null || settings.upgradedDefaults) {
+      await _writeSettingsJson();
+    }
+    if (settings.upgradedDefaults) {
+      _log(
+        'info',
+        'Updated to safer starting defaults: '
+            '${settings.risk.riskPerTradePct}% risk per trade, '
+            '${settings.risk.maxOpenPositions} open position at a time. '
+            'Settings you had changed yourself were kept.',
+      );
     }
 
     ensemble = SignalEnsemble(config: settings.ensemble);
@@ -259,7 +291,7 @@ class AppState extends ChangeNotifier {
   Future<void> updateSettings(AppSettings next) async {
     // Diff against the last *persisted* snapshot — callers often mutate the
     // live settings object in place, so object identity proves nothing.
-    final prev = await _json.readObject(_kSettings);
+    final prev = await _readSettingsJson();
     final wasRunning = backgroundRunning || (engine?.isRunning ?? false);
     final brokerChanged = prev != null &&
         (prev['brokerMode'] != next.brokerMode.name ||
@@ -272,7 +304,7 @@ class AppState extends ChangeNotifier {
     ensemble.config = settings.ensemble;
     risk.config = settings.risk;
     notifications.config = settings.notifications;
-    await _json.writeObject(_kSettings, settings.toJson());
+    await _writeSettingsJson();
 
     if (rebuildData) {
       dataSource = _buildDataSource(settings);
@@ -541,19 +573,33 @@ class AppState extends ChangeNotifier {
     lastError = null;
     notifyListeners();
     try {
-      final bt = Backtester(
-        source: dataSource,
-        estimator: const TrendEstimator(),
-        config: BacktestConfig(
-          risk: settings.risk,
-          ensemble: settings.ensemble,
-          useMl: settings.ensemble.useMl,
-        ),
+      Backtester tester(bool ml) => Backtester(
+            source: dataSource,
+            estimator: const TrendEstimator(),
+            config: BacktestConfig(
+              risk: settings.risk,
+              ensemble: settings.ensemble,
+              useMl: ml,
+            ),
+          );
+      final useMl = settings.ensemble.useMl;
+      final history = await dataSource.getBars(
+        symbol: symbol.toUpperCase(),
+        interval: interval,
+        limit: bars,
       );
-      lastBacktest = await bt.run(symbol: symbol, interval: interval, bars: bars);
+      lastBacktest = tester(useMl).runOn(symbol: symbol, history: history);
+      // With ML on, run the same bars without it. The ML layer only earns
+      // its place if it beats the plain rules.
+      lastBacktestNoMl =
+          useMl ? tester(false).runOn(symbol: symbol, history: history) : null;
+      final m = lastBacktest!.metrics;
+      final plain = lastBacktestNoMl?.metrics;
       _log('info',
-          'backtest $symbol: ${lastBacktest!.metrics.tradeCount} trades, '
-          '${lastBacktest!.metrics.returnPct.toStringAsFixed(2)}% '
+          'backtest $symbol: ${m.tradeCount} trades, '
+          '${m.returnPct.toStringAsFixed(2)}%'
+          '${plain == null ? '' : ' (without ML: ${plain.tradeCount} trades, '
+              '${plain.returnPct.toStringAsFixed(2)}%)'} '
           '(paper simulation, not a guarantee)');
     } catch (e) {
       lastError = 'backtest failed: $e';
@@ -572,6 +618,13 @@ class AppState extends ChangeNotifier {
     if (b is PaperBroker) return List<PaperFill>.from(b.fills.reversed);
     return const <PaperFill>[];
   }
+
+  /// How the paper record measures against the go-live checks. Built from
+  /// the in-app paper account's fills (Alpaca paper trades are not counted).
+  LiveReadiness get liveReadiness => LiveReadiness.fromPerformance(
+        PortfolioPerformance.fromFills(tradeLog),
+        startingEquity: settings.paperStartingCash,
+      );
 
   /// Close an open position immediately via broker market order.
   Future<void> closePosition(String symbol) async {
@@ -650,7 +703,7 @@ class AppState extends ChangeNotifier {
     broker = PaperBroker(startingCash: next.paperStartingCash);
     engine = _buildEngine();
     _wireEngine(engine!);
-    await _json.writeObject(_kSettings, settings.toJson());
+    await _writeSettingsJson();
     await _persistPaper();
     await refreshAccount();
     _log('info', 'paper account reset to \$${next.paperStartingCash.toStringAsFixed(0)}');
@@ -680,11 +733,89 @@ class AppState extends ChangeNotifier {
   /// Rebuilds UI after imperative tweaks (e.g. risk-manager reset).
   void notifyManually() => notifyListeners();
 
-  Future<void> persistSettings() =>
-      _json.writeObject(_kSettings, settings.toJson());
+  Future<void> persistSettings() => _writeSettingsJson();
+
+  /// Settings from disk with the keys merged back in from [_vault]. Keys
+  /// found in the file (older installs) are moved into the vault and removed
+  /// from the file.
+  Future<Map<String, dynamic>?> _readSettingsJson() async {
+    final json = await _json.readObject(_kSettings);
+    if (json == null) return null;
+    final fileId = json['keyId']?.toString() ?? '';
+    final fileSecret = json['secretKey']?.toString() ?? '';
+    TradingKeys? vaulted;
+    try {
+      vaulted = await _vault.readKeys();
+      _vaultUnreadable = false;
+    } catch (e) {
+      vaulted = null;
+      if (!_vaultUnreadable) {
+        _log('error',
+            'Saved broker keys could not be read from the secure store ($e). '
+            'If the app stops trading on Alpaca, paste the keys again in '
+            'Settings.');
+      }
+      _vaultUnreadable = true;
+    }
+    if (fileId.isNotEmpty || fileSecret.isNotEmpty) {
+      final fromFile = TradingKeys(keyId: fileId, secretKey: fileSecret);
+      final keys =
+          (vaulted != null && vaulted.isConfigured) ? vaulted : fromFile;
+      try {
+        if (vaulted == null || !vaulted.isConfigured) {
+          await _vault.writeKeys(fromFile);
+        }
+        _vaultedKeys = keys;
+        keysInPlainFile = false;
+        final stripped = Map<String, dynamic>.from(json)
+          ..remove('keyId')
+          ..remove('secretKey');
+        await _json.writeObject(_kSettings, stripped);
+      } catch (_) {
+        // The secure store is not usable here. Leave the file as it was.
+        keysInPlainFile = true;
+      }
+      return <String, dynamic>{
+        ...json,
+        'keyId': keys.keyId,
+        'secretKey': keys.secretKey,
+      };
+    }
+    _vaultedKeys = vaulted;
+    return <String, dynamic>{
+      ...json,
+      'keyId': vaulted?.keyId ?? '',
+      'secretKey': vaulted?.secretKey ?? '',
+    };
+  }
+
+  /// Write settings without the keys, and the keys to [_vault].
+  Future<void> _writeSettingsJson() async {
+    final json = settings.toJson();
+    final keys = settings.keys;
+    var plain = false;
+    final wouldWipe =
+        _vaultUnreadable && keys.keyId.isEmpty && keys.secretKey.isEmpty;
+    if (_vaultedKeys != keys && !wouldWipe) {
+      try {
+        await _vault.writeKeys(keys);
+        _vaultedKeys = keys;
+        _vaultUnreadable = false;
+      } catch (_) {
+        plain = true;
+      }
+    }
+    keysInPlainFile = plain;
+    if (!plain) {
+      json
+        ..remove('keyId')
+        ..remove('secretKey');
+    }
+    await _json.writeObject(_kSettings, json);
+  }
 
   Future<void> reloadSettingsFromDisk() async {
-    final json = await _json.readObject(_kSettings);
+    final json = await _readSettingsJson();
     if (json == null) return;
     settings = AppSettings.fromJson(json);
     engine?.settings = settings;

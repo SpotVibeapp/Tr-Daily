@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../broker/alpaca_broker.dart';
-import '../../core/pdt.dart';
 import '../../core/time.dart';
 import '../../data/models.dart';
 import '../../engine/budget.dart';
@@ -131,10 +130,6 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-
-                // ---- PDT warning (only near/over the limit) ----
-                if (_pdt().isNearLimit || _pdt().isRestricted)
-                  _PdtBanner(snapshot: _pdt()),
 
                 // ---- engine row ----
                 Container(
@@ -290,42 +285,15 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  /// Pattern-day-trader awareness: broker-reported (live) or estimated from
-  /// the paper fill log.
+  /// The sizing band for today's starting equity.
   String _scaleLine(AppState state) {
-    final plan = scalePlan(
-      account: state.account,
-      settings: state.settings,
-      dayTradeCount: 0,
-    );
+    final plan = scalePlan(account: state.account, settings: state.settings);
     final band = switch (plan.band) {
-      AccountBand.fullDayTrade => 'Full day trading is available.',
-      AccountBand.building =>
-        'Building — full day trading starts at \$25,000.',
+      AccountBand.fullDayTrade => 'Top sizing band.',
+      AccountBand.building => 'Shorts allowed from \$2,000.',
       AccountBand.micro => 'Small-account range until the next session is higher.',
     };
     return 'Sized from today\'s start ${TrTheme.money(plan.dayStartEquity)}. $band';
-  }
-
-  PdtSnapshot _pdt() {
-    final equity = state.settings.scaleWithBalance
-        ? dayStartEquityOf(state.account)
-        : state.account.equity;
-    final brokerIsLive = state.broker.mode == BrokerMode.live;
-    if (brokerIsLive) {
-      return reportedPdt(
-        dayTradeCount: state.account.dayTradeCount,
-        equity: equity,
-      );
-    }
-    return estimatePaperPdt(
-      fills: [
-        for (final f in state.tradeLog)
-          (symbol: f.symbol, time: f.time, isBuy: f.side == OrderSide.buy),
-      ],
-      equity: equity,
-      now: DateTime.now(),
-    );
   }
 
   BoxDecoration _cardDecoration() => BoxDecoration(
@@ -333,38 +301,6 @@ class DashboardScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: TrTheme.outline),
       );
-}
-
-class _PdtBanner extends StatelessWidget {
-  const _PdtBanner({required this.snapshot});
-
-  final PdtSnapshot snapshot;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = snapshot.isRestricted ? TrTheme.down : TrTheme.warn;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.10),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.5)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.gavel, color: color, size: 20),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              snapshot.note,
-              style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _PositionCard extends StatelessWidget {

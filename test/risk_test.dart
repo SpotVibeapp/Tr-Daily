@@ -82,7 +82,8 @@ void main() {
         day: DateTime(2026, 6, 10, 10),
       );
       expect(v.allowed, isTrue);
-      expect(v.suggestedQty, 2);
+      // 0.5% of $100 = $0.50 at risk; the stop is 1.5 × $0.20 = $0.30 away.
+      expect(v.suggestedQty, 1);
       expect(v.suggestedQty! * 4, lessThanOrEqualTo(25));
     });
 

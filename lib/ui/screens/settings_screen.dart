@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import '../../broker/alpaca_broker.dart';
 import '../../broker/paper_broker.dart';
 import '../../core/config.dart';
+import '../../engine/liquidity.dart';
 import '../../engine/scale.dart';
 import '../../data/models.dart';
 import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
+import '../widgets/readiness_panel.dart';
 import 'home_shell.dart';
 
 /// Broker connection, data provider, watchlist, risk & ensemble parameters.
@@ -107,27 +109,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: TrTheme.surface,
         title: const Text('Enable LIVE trading?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Live mode routes REAL orders to your funded brokerage account. '
-              'Automated trading can lose money — rapidly. Tr-Daily has no way '
-              'to guarantee profits. If the engine is on, closing the app does '
-              'not stop live orders. Turn the engine off, or tap Stop on the '
-              'notification, to stop. A daily loss stop can halt the rest of '
-              'the day. A profit goal does not.',
-              style: TextStyle(color: TrTheme.textMuted, fontSize: 13),
-            ),
-            SizedBox(height: 12),
-            Text(
-              'Type TRADE REAL MONEY to confirm:',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-            ),
-            SizedBox(height: 8),
-            _ConfirmField(controller: controller),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ReadinessPanel(readiness: widget.state.liveReadiness),
+              const SizedBox(height: 12),
+              Text(
+                'Live mode routes REAL orders to your funded brokerage account. '
+                'Automated trading can lose money — rapidly. Tr-Daily has no way '
+                'to guarantee profits. If the engine is on, closing the app does '
+                'not stop live orders. Turn the engine off, or tap Stop on the '
+                'notification, to stop. A daily loss stop can halt the rest of '
+                'the day. A profit goal does not.',
+                style: TextStyle(color: TrTheme.textMuted, fontSize: 13),
+              ),
+              SizedBox(height: 12),
+              Text(
+                'Type TRADE REAL MONEY to confirm:',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              ),
+              SizedBox(height: 8),
+              _ConfirmField(controller: controller),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -540,6 +546,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         },
                         () => _save(silent: true),
                       ),
+                    _sliderRow(
+                      'Minimum share price',
+                      s.minSharePrice <= 0
+                          ? 'off'
+                          : '\$${s.minSharePrice.toStringAsFixed(2)}',
+                      s.minSharePrice.clamp(0, 5).toDouble(),
+                      0,
+                      5,
+                      (v) {
+                        setState(() =>
+                            s.minSharePrice = (v * 2).roundToDouble() / 2);
+                      },
+                      () => _save(silent: true),
+                    ),
+                    _sliderRow(
+                      'Minimum traded per session',
+                      s.minDollarVolume <= 0
+                          ? 'off'
+                          : compactDollars(s.minDollarVolume),
+                      (s.minDollarVolume / 1e6).clamp(0, 10).toDouble(),
+                      0,
+                      10,
+                      (v) {
+                        setState(() => s.minDollarVolume =
+                            (v * 2).roundToDouble() / 2 * 1e6);
+                      },
+                      () => _save(silent: true),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'New trades skip names under these floors. Thin names '
+                        'fill badly and their stops slip. Positions already '
+                        'open are still managed.',
+                        style: TextStyle(
+                            color: TrTheme.textMuted, fontSize: 12),
+                      ),
+                    ),
                     _switchRow(
                       'Allow overnight holds',
                       'Off by default. Leaves a position open past the close. '
@@ -891,16 +935,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           _save(silent: true);
                         },
                       ),
-                      _switchRow(
-                        'PDT warnings',
-                        'Alert when approaching 3 day-trades limit',
-                        s.notifications.notifyOnPdt,
-                        (v) {
-                          setState(() => s.notifications =
-                              s.notifications.copyWith(notifyOnPdt: v));
-                          _save(silent: true);
-                        },
-                      ),
                       const SizedBox(height: 12),
                       const Text(
                         'Free Remote Push Alerts (Phone / Desktop)',
@@ -1073,11 +1107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return 'Scaling is off. Size uses the current equity, and a large '
           'balance does not add lower-priced names.';
     }
-    final plan = scalePlan(
-      account: st.account,
-      settings: s,
-      dayTradeCount: 0,
-    );
+    final plan = scalePlan(account: st.account, settings: s);
     return plan.summary;
   }
 

@@ -4,6 +4,7 @@ import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../strategy/ensemble.dart';
 import '../strategy/signals.dart';
+import 'liquidity.dart';
 
 class ScanOutcome {
   const ScanOutcome({
@@ -182,6 +183,7 @@ class MarketScanner {
         signal: decision.signal.copyWith(
           sourceId: batch.sourceId,
           lastBarAt: bars.last.time,
+          sessionDollarVolume: sessionDollarVolume(bars, interval),
         ),
         error: null,
         thinBars: null,

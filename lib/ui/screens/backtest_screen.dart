@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
+import '../../engine/backtester.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -200,6 +201,15 @@ class _BacktestScreenState extends State<BacktestScreen> {
                 ),
                 const SizedBox(height: 14),
 
+                // ---- the same bars without the ML layer ----
+                if (st.lastBacktestNoMl != null) ...[
+                  _MlCompare(
+                    withMl: m,
+                    withoutMl: st.lastBacktestNoMl!.metrics,
+                  ),
+                  const SizedBox(height: 14),
+                ],
+
                 // ---- trade list ----
                 const Text(
                   'RECENT TRADES',
@@ -311,6 +321,100 @@ class _BacktestPlaceholder extends StatelessWidget {
             'Strict no-lookahead execution: signals on close, fills at next open.',
             textAlign: TextAlign.center,
             style: TextStyle(color: TrTheme.textMuted, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Side by side: the backtest with the ML layer and the same bars without it.
+class _MlCompare extends StatelessWidget {
+  const _MlCompare({required this.withMl, required this.withoutMl});
+
+  final BacktestMetrics withMl;
+  final BacktestMetrics withoutMl;
+
+  @override
+  Widget build(BuildContext context) {
+    final diff = withMl.totalPnl - withoutMl.totalPnl;
+    final helps = diff > 0 && withMl.profitFactor >= withoutMl.profitFactor;
+    final verdict = withMl.tradeCount < 10 && withoutMl.tradeCount < 10
+        ? 'Too few trades to tell whether ML helps. Try a longer range.'
+        : helps
+            ? 'ML added ${TrTheme.money(diff, signed: true)} on these bars.'
+            : 'ML did not beat the plain rules here '
+                '(${TrTheme.money(diff, signed: true)}). Consider turning it '
+                'off in Settings.';
+
+    String pf(BacktestMetrics m) =>
+        m.profitFactor >= 999 ? '∞' : m.profitFactor.toStringAsFixed(2);
+
+    TableRow row(String label, String a, String b) => TableRow(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Text(label,
+                  style: const TextStyle(
+                      color: TrTheme.textMuted, fontSize: 12)),
+            ),
+            Text(a,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 12.5)),
+            Text(b,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 12.5)),
+          ],
+        );
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: TrTheme.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: TrTheme.outline),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'WITH ML vs WITHOUT',
+            style: TextStyle(
+              color: TrTheme.textMuted,
+              fontSize: 11,
+              letterSpacing: 1,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Table(
+            columnWidths: const <int, TableColumnWidth>{
+              0: FlexColumnWidth(1.4),
+              1: FlexColumnWidth(),
+              2: FlexColumnWidth(),
+            },
+            children: [
+              row('', 'With ML', 'Without'),
+              row('Profit',
+                  TrTheme.money(withMl.totalPnl, signed: true),
+                  TrTheme.money(withoutMl.totalPnl, signed: true)),
+              row('Trades', '${withMl.tradeCount}', '${withoutMl.tradeCount}'),
+              row('Win rate', '${withMl.winRate.toStringAsFixed(0)}%',
+                  '${withoutMl.winRate.toStringAsFixed(0)}%'),
+              row('Profit factor', pf(withMl), pf(withoutMl)),
+              row('Max DD', '${withMl.maxDrawdownPct.toStringAsFixed(1)}%',
+                  '${withoutMl.maxDrawdownPct.toStringAsFixed(1)}%'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            verdict,
+            style: TextStyle(
+              color: helps ? TrTheme.up : TrTheme.warn,
+              fontSize: 12,
+            ),
           ),
         ],
       ),
