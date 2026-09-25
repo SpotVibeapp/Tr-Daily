@@ -306,7 +306,9 @@ class BudgetSession {
       maxSharePrice: maxPx,
       sleeve: List<String>.unmodifiable(sleeve),
       skipped: List<String>.unmodifiable(
-        skipped.isEmpty
+        // Only fill this in when no watchlist price fit. An empty skip list
+        // on a large account means the watchlist is still eligible.
+        skipped.isEmpty && affordable.isEmpty
             ? settings.watchlist.map((s) => s.toUpperCase()).toList()
             : skipped,
       ),
