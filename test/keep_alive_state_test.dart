@@ -10,7 +10,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('settings remember that the user started the engine', () {
-    const defaults = AppSettings();
+    final defaults = AppSettings();
     expect(defaults.engineArmed, isFalse);
     expect(defaults.keepRunningWhenClosed, isTrue);
 
@@ -50,7 +50,7 @@ void main() {
     final reopened = AppState(store: store);
     await reopened.init(launchEngine: false);
     expect(reopened.settings.engineArmed, isTrue);
-    expect(reopened.account?.equity, closeTo(800, 0.01));
+    expect(reopened.account.equity, closeTo(800, 0.01));
     reopened.dispose();
   });
 }
