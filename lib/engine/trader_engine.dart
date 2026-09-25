@@ -266,11 +266,15 @@ class TraderEngine {
         now: now,
       );
       lastScanAt = now;
-      if (outcome.hasErrors) {
-        lastError = outcome.errors.entries.map((e) => '${e.key}: ${e.value}').join('; ');
-        lastErrorAt = now;
-        _emit('error', 'data issues: $lastError');
-      }
+      // Warn only about real failures and thin names the user picked or
+      // holds. Thin names from the market walk are skipped, not errors, and
+      // are counted on the scan line below. Each pass replaces the last
+      // pass's warning so an old one does not stay on screen.
+      final mine = <String>[...settings.watchlist, ...extraHeld];
+      lastError = outcome.warningFor(mine);
+      lastErrorAt = lastError == null ? null : now;
+      if (lastError != null) _emit('error', 'data issues: $lastError');
+      final thinSkipped = outcome.thinSkipped(mine);
 
       // 2) Mark prices into the paper broker (feeds fills & uPnL).
       if (broker is PaperBroker) {
@@ -331,15 +335,14 @@ class TraderEngine {
           }
           signals = <SignalScore>[...signals, ...sleeveOutcome.signals]
             ..sort((a, b) => b.score.abs().compareTo(a.score.abs()));
-          if (sleeveOutcome.hasErrors) {
-            final sleeveError = sleeveOutcome.errors.entries
-                .map((e) => '${e.key}: ${e.value}')
-                .join('; ');
+          final sleeveError = sleeveOutcome.warningFor(mine);
+          if (sleeveError != null) {
             lastError = lastError == null
                 ? sleeveError
                 : '$lastError; $sleeveError';
             lastErrorAt = now;
           }
+          thinSkipped.addAll(sleeveOutcome.thinSkipped(mine));
           account = await broker.getAccount();
           plan = _planFor(account, now);
         }
@@ -601,6 +604,9 @@ class TraderEngine {
       ];
       if (marketScan.last.walkedMarket) {
         scanBits.add('listed ${marketScan.last.rangeLabel}');
+      }
+      if (thinSkipped.isNotEmpty) {
+        scanBits.add('${thinSkipped.length} thin skipped');
       }
       if (broker.mode == BrokerMode.live) scanBits.add('LIVE');
       if (risk.isHalted) {

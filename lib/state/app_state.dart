@@ -411,10 +411,14 @@ class AppState extends ChangeNotifier {
         interval: settings.interval,
       );
       var merged = out.signals;
-      if (out.hasErrors) {
-        lastError =
-            out.errors.entries.map((e) => '${e.key}: ${e.value}').join('; ');
-      }
+      // Only warn about names the user picked or holds. Thin names from the
+      // listed-market walk are skipped and go to the log instead.
+      final mine = <String>[
+        ...settings.watchlist,
+        for (final p in positions) p.symbol,
+      ];
+      lastError = out.warningFor(mine);
+      final thinSkipped = out.thinSkipped(mine);
       if (broker is PaperBroker) {
         final pb = broker as PaperBroker;
         for (final s in out.signals) {
@@ -465,14 +469,13 @@ class AppState extends ChangeNotifier {
                 pb.setPrice(s.symbol, s.price);
               }
             }
-            if (sleeveOut.hasErrors) {
-              final sleeveError = sleeveOut.errors.entries
-                  .map((e) => '${e.key}: ${e.value}')
-                  .join('; ');
+            final sleeveError = sleeveOut.warningFor(mine);
+            if (sleeveError != null) {
               lastError = lastError == null
                   ? sleeveError
                   : '$lastError; $sleeveError';
             }
+            thinSkipped.addAll(sleeveOut.thinSkipped(mine));
           }
         }
         if (advice.active && advice.summary.isNotEmpty) {
@@ -501,6 +504,8 @@ class AppState extends ChangeNotifier {
       final range = pass.walkedMarket ? ' · listed ${pass.rangeLabel}' : '';
       _log('scan',
           'manual scan complete · ${merged.length} symbols$range · source=${out.dataSourceId}');
+      final thinNote = thinSkippedNote(thinSkipped);
+      if (thinNote.isNotEmpty) _log('info', thinNote);
     } catch (e) {
       lastError = '$e';
       _log('error', 'scan failed: $e');
