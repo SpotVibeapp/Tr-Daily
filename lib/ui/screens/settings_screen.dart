@@ -271,7 +271,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       decoration: const InputDecoration(
                         labelText: 'Data provider',
                         helperText:
-                            'auto = Yahoo → bundled sample → synthetic fallback',
+                            'auto = Alpaca when keys are saved, then Yahoo, bundled sample, synthetic',
                       ),
                       items: const [
                         DropdownMenuItem(

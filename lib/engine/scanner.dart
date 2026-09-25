@@ -56,37 +56,31 @@ class MarketScanner {
     final at = now ?? DateTime.now();
     final signals = <SignalScore>[];
     final errors = <String, String>{};
+    final unique = <String>[];
+    final seen = <String>{};
+    for (final raw in symbols) {
+      final symbol = raw.toUpperCase();
+      if (symbol.isEmpty || !seen.add(symbol)) continue;
+      unique.add(symbol);
+    }
 
-    for (final rawSymbol in symbols) {
-      final symbol = rawSymbol.toUpperCase();
-      try {
-        final bars = await source.getBars(
-          symbol: symbol,
-          interval: interval,
-          limit: barsPerSymbol,
-        );
-        if (bars.length < 60) {
-          errors[symbol] = 'only ${bars.length} bars available';
-          continue;
-        }
-        final bundle = IndicatorBundle(bars);
-        final snapshot = estimator.estimate(bars);
-        final model = modelFor(symbol);
-
-        if (train) {
-          _trainIncremental(symbol, bars, snapshot, model);
-        }
-
-        final decision = ensemble.evaluate(
-          bars: bars,
-          snapshot: snapshot,
-          bundle: bundle,
-          model: model,
-          now: at,
-        );
-        signals.add(decision.signal);
-      } catch (e) {
-        errors[symbol] = e.toString();
+    // A few names at a time. One-by-one scans were still running when the
+    // next minute arrived, so the tick was skipped and the prices were older.
+    const width = 4;
+    for (var i = 0; i < unique.length; i += width) {
+      final end = i + width > unique.length ? unique.length : i + width;
+      final slice = unique.sublist(i, end);
+      final rows = await Future.wait(slice.map((symbol) => _scanOne(
+            symbol,
+            interval: interval,
+            now: at,
+            train: train,
+          )));
+      for (final row in rows) {
+        final signal = row.signal;
+        if (signal != null) signals.add(signal);
+        final error = row.error;
+        if (error != null) errors[row.symbol] = error;
       }
     }
 
@@ -97,6 +91,53 @@ class MarketScanner {
       at: at,
       dataSourceId: source.id,
     );
+  }
+
+  Future<({String symbol, SignalScore? signal, String? error})> _scanOne(
+    String symbol, {
+    required BarInterval interval,
+    required DateTime now,
+    required bool train,
+  }) async {
+    try {
+      final batch = await loadBars(
+        source,
+        symbol: symbol,
+        interval: interval,
+        limit: barsPerSymbol,
+      );
+      final bars = batch.bars;
+      if (bars.length < 60) {
+        return (
+          symbol: symbol,
+          signal: null,
+          error: 'only ${bars.length} bars available',
+        );
+      }
+      final bundle = IndicatorBundle(bars);
+      final snapshot = estimator.estimate(bars);
+      final model = modelFor(symbol);
+      if (train) {
+        _trainIncremental(symbol, bars, snapshot, model);
+      }
+      final decision = ensemble.evaluate(
+        bars: bars,
+        snapshot: snapshot,
+        bundle: bundle,
+        model: model,
+        now: now,
+      );
+      return (
+        symbol: symbol,
+        signal: decision.signal.copyWith(
+          sourceId: batch.sourceId,
+          lastBarAt: bars.last.time,
+        ),
+        error: null,
+      );
+    } catch (e) {
+      return (symbol: symbol, signal: null, error: e.toString());
+    }
   }
 
   /// Train the model on historical bars with strict causality: each example

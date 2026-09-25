@@ -106,7 +106,8 @@ of profit.
   when the bid-ask spread is 25% or more of the profit-point distance, or when
   the quote cannot be read. Outside the regular session the app does not send
   a market order. An extended-hours order is a limit at the bid or ask, or it
-  is not sent.
+  is not sent. Demo prices and a bar older than three intervals do not open a
+  trade. A name with an order already working does not get a second order.
 
 ## 7. What this is NOT
 

@@ -9,7 +9,7 @@ name: Build APK
 #    the APK-commit step skips re-pushing when bytes are unchanged, so no loop)
 #  - repository_dispatch `build-apk` (only fires once this file is on the
 #    default branch; until then, push a change to this file). Rebuilds the
-#    v0.1.7 cost-gate APK. Skip a wide spread. No market orders outside the regular session. Build after the compile fix.
+#    v0.1.8 efficiency APK. Faster scans, no demo-price entries, no second order while one is working.
 #  - workflow_dispatch (visible once the file exists on the default branch)
 on:
   push:
@@ -125,9 +125,9 @@ jobs:
             "                                     Recover with: base64 -d <file.b64> > <file.apk>" \
             "- Tr-Daily-v${APP_VERSION}-universal.apk      raw APK (all ABIs)" \
             "" \
-            "Install this build, not an older file. A wide spread is skipped." \
-            "Outside the regular session the app does not send a market order." \
-            "This does not guarantee a profit." \
+            "Install this build, not an older file. Scans run a few names at a time." \
+            "Demo prices and stale bars do not open a trade. A working order" \
+            "blocks a second order in that name. This does not guarantee a profit." \
             > artifacts/apk/README.txt
           ls -lh artifacts/apk/
 

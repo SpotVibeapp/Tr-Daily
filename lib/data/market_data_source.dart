@@ -39,6 +39,49 @@ abstract class MarketDataSource {
   }
 }
 
+/// Bars plus the feed that actually returned them.
+class BarBatch {
+  const BarBatch({required this.bars, required this.sourceId});
+
+  final List<Candle> bars;
+  final String sourceId;
+}
+
+/// Load bars and remember which feed succeeded. A composite source reports
+/// the child id, not the joined name, so demo data can be told from a live feed.
+Future<BarBatch> loadBars(
+  MarketDataSource source, {
+  required String symbol,
+  required BarInterval interval,
+  int limit = 400,
+  DateTime? end,
+}) async {
+  if (source is CompositeDataSource) {
+    final errors = <String>[];
+    for (final child in source.sources) {
+      try {
+        final bars = await child.getBars(
+          symbol: symbol,
+          interval: interval,
+          limit: limit,
+          end: end,
+        );
+        return BarBatch(bars: bars, sourceId: child.id);
+      } catch (e) {
+        errors.add('${child.id}: $e');
+      }
+    }
+    throw DataSourceException('all sources failed: ${errors.join(' | ')}');
+  }
+  final bars = await source.getBars(
+    symbol: symbol,
+    interval: interval,
+    limit: limit,
+    end: end,
+  );
+  return BarBatch(bars: bars, sourceId: source.id);
+}
+
 /// Thrown when a source cannot satisfy a request (network, quota, parsing).
 class DataSourceException implements Exception {
   DataSourceException(this.message, {this.source});

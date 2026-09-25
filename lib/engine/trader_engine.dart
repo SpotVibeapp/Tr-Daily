@@ -8,6 +8,7 @@ import '../core/pdt.dart';
 import '../core/time.dart';
 import 'cost_gate.dart';
 import 'day_trade.dart';
+import 'scan_quality.dart';
 import 'scale.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
@@ -255,6 +256,7 @@ class TraderEngine {
         final pb = broker as PaperBroker;
         pb.rollDay(now);
         for (final s in outcome.signals) {
+          if (isDemoSource(s.sourceId)) continue;
           pb.setPrice(s.symbol, s.price);
         }
       }
@@ -302,6 +304,7 @@ class TraderEngine {
           if (broker is PaperBroker) {
             final pb = broker as PaperBroker;
             for (final s in sleeveOutcome.signals) {
+              if (isDemoSource(s.sourceId)) continue;
               pb.setPrice(s.symbol, s.price);
             }
           }
@@ -438,8 +441,51 @@ class TraderEngine {
             : signals;
         final quiet = <String>[];
         final oversized = <String>[];
+        final working = <String>{
+          for (final order in _pendingOrders.values) order.symbol.toUpperCase(),
+        };
+        try {
+          final openOrders = await broker.getOpenOrders();
+          for (final order in openOrders) {
+            working.add(order.symbol.toUpperCase());
+          }
+        } catch (_) {
+          // The broker's open-order list could not be read. Local pending orders are still blocked.
+        }
+        final freshSession = isMarketOpen(now) ||
+            (settings.extendedHours && isExtendedSession(now));
         for (final sig in ranked) {
           if (heldSymbols.contains(sig.symbol)) continue;
+          if (working.contains(sig.symbol.toUpperCase())) {
+            _noteOnce(
+              now,
+              'skip ${sig.symbol}: an order is already working. No second order was sent.',
+              notedDay: true,
+            );
+            continue;
+          }
+          if (isDemoSource(sig.sourceId) &&
+              !settings.risk.allowTradingWithoutData) {
+            _noteOnce(
+              now,
+              'skip ${sig.symbol}: the price came from demo data, not a live feed. No order was sent.',
+              notedDay: true,
+            );
+            continue;
+          }
+          if (barIsStale(
+            lastBarAt: sig.lastBarAt,
+            now: now,
+            interval: settings.interval.duration,
+            sessionExpectsFreshBars: freshSession,
+          )) {
+            _noteOnce(
+              now,
+              'skip ${sig.symbol}: the last bar is too old for a new trade. Scanning continues.',
+              notedDay: true,
+            );
+            continue;
+          }
           final newsDecision = _newsEntry(sig);
           var side = sig.stance;
           var sizeMultiplier = 1.0;

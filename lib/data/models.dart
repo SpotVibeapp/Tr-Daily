@@ -285,6 +285,8 @@ class SignalScore {
     this.suggestedStop,
     this.suggestedTarget,
     this.breakdown = const <String, double>{},
+    this.sourceId = '',
+    this.lastBarAt,
   });
 
   final String symbol;
@@ -307,7 +309,34 @@ class SignalScore {
   /// Per-signal contributions for explainability (name -> raw value in [-1,1]).
   final Map<String, double> breakdown;
 
+  /// Which feed produced the bars. Empty when unknown.
+  final String sourceId;
+
+  /// Time of the last bar used for this score.
+  final DateTime? lastBarAt;
+
   int get scorePct => (score * 100).round().clamp(-100, 100);
+
+  SignalScore copyWith({
+    String? sourceId,
+    DateTime? lastBarAt,
+  }) {
+    return SignalScore(
+      symbol: symbol,
+      score: score,
+      confidence: confidence,
+      stance: stance,
+      reasons: reasons,
+      price: price,
+      generatedAt: generatedAt,
+      mlProbability: mlProbability,
+      suggestedStop: suggestedStop,
+      suggestedTarget: suggestedTarget,
+      breakdown: breakdown,
+      sourceId: sourceId ?? this.sourceId,
+      lastBarAt: lastBarAt ?? this.lastBarAt,
+    );
+  }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'symbol': symbol,

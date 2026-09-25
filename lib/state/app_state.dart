@@ -156,6 +156,14 @@ class AppState extends ChangeNotifier {
     final yahoo = YahooFinanceSource();
     switch (s.dataProvider) {
       case DataProviderMode.auto:
+        if (s.keys.isConfigured) {
+          return CompositeDataSource(<MarketDataSource>[
+            AlpacaDataSource(keys: s.keys),
+            yahoo,
+            bundled,
+            synthetic,
+          ]);
+        }
         return CompositeDataSource(<MarketDataSource>[yahoo, bundled, synthetic]);
       case DataProviderMode.yahoo:
         return CompositeDataSource(<MarketDataSource>[yahoo, synthetic]);

@@ -7,7 +7,7 @@ import 'secrets.dart';
 
 /// Which market-data chain to use.
 enum DataProviderMode {
-  /// Try Yahoo → bundled → synthetic (recommended).
+  /// Alpaca first when keys exist, then Yahoo, bundled, and synthetic.
   auto,
 
   /// Yahoo Finance only.
