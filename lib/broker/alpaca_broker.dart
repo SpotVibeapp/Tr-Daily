@@ -198,12 +198,18 @@ class AlpacaBroker implements Broker {
     if (request.extendedHours) {
       body['extended_hours'] = true;
     }
-    // Bracket orders: native stop/target handling at the broker.
+    // Bracket caps the trade at the profit point. OTO keeps the stop and
+    // leaves further profit to the engine trail.
     if (request.takeProfit != null && request.stopLoss != null) {
       body['order_class'] = 'bracket';
       body['take_profit'] = <String, dynamic>{
         'limit_price': request.takeProfit!.toStringAsFixed(2),
       };
+      body['stop_loss'] = <String, dynamic>{
+        'stop_price': request.stopLoss!.toStringAsFixed(2),
+      };
+    } else if (request.stopLoss != null) {
+      body['order_class'] = 'oto';
       body['stop_loss'] = <String, dynamic>{
         'stop_price': request.stopLoss!.toStringAsFixed(2),
       };

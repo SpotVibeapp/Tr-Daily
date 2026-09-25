@@ -114,7 +114,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Text(
               'Live mode routes REAL orders to your funded brokerage account. '
               'Automated trading can lose money — rapidly. Tr-Daily has no way '
-              'to guarantee profits.',
+              'to guarantee profits. If the engine is on, closing the app does '
+              'not stop live orders. Turn the engine off, or tap Stop on the '
+              'notification, to stop. A daily loss stop can halt the rest of '
+              'the day. A profit goal does not.',
               style: TextStyle(color: TrTheme.textMuted, fontSize: 13),
             ),
             SizedBox(height: 12),
@@ -566,7 +569,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     _switchRow(
                       'Keep running when closed',
-                      'Android shows a notification and keeps scanning if you leave or swipe the app away. Force Stop in system settings still stops it. The phone being off stops it too.',
+                      'Paper and live. Android keeps scanning and can keep sending orders if you leave or swipe the app away. It stops only if you turn the engine off, tap Stop on the notification, Force Stop the app, or the phone is off. A daily loss stop can halt new trades for the rest of that day.',
                       s.keepRunningWhenClosed,
                       (v) {
                         setState(() => s.keepRunningWhenClosed = v);
@@ -575,7 +578,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     _switchRow(
                       'Extended-hours trading',
-                      'Route orders 4am–8pm ET (Alpaca; market orders only)',
+                      'New trades can be sent from 4:00 a.m. to 8:00 p.m. ET, including live. Alpaca may still reject an order. Scanning continues outside that window.',
                       s.extendedHours,
                       (v) {
                         setState(() => s.extendedHours = v);
@@ -584,7 +587,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     _switchRow(
                       'Trade while market closed',
-                      'Paper only — evaluate setups outside 9:30–16:00 ET',
+                      'Paper only. Live does not invent fills outside the session. Scanning continues either way.',
                       s.tradeWhileClosed,
                       (v) {
                         setState(() => s.tradeWhileClosed = v);
@@ -629,7 +632,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _sectionTitle('RISK MANAGEMENT'),
               _card(
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    const Text(
+                      'Stop and profit points are customizable. They follow volatility (ATR), not a fixed percent. The daily goal is a milestone, not a cap and not a promise. Reaching it does not stop scanning or refuse more profit, and it does not increase size to chase it. The loss stop does halt the day.',
+                      style: TextStyle(
+                        color: TrTheme.textMuted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     _sliderRow(
                       'Risk per trade',
                       '${s.risk.riskPerTradePct.toStringAsFixed(2)}% of equity',
@@ -643,11 +656,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       () => _save(silent: true),
                     ),
                     _sliderRow(
-                      'Max daily loss',
-                      'Halt at -${s.risk.maxDailyLossPct.toStringAsFixed(1)}%/day',
+                      'Daily profit goal',
+                      s.risk.dailyProfitGoalPct <= 0
+                          ? 'Off'
+                          : '${s.risk.dailyProfitGoalPct.toStringAsFixed(0)}%',
+                      s.risk.dailyProfitGoalPct,
+                      0,
+                      100,
+                      (v) {
+                        setState(() => s.risk = s.risk.copyWith(
+                            dailyProfitGoalPct: v.roundToDouble()));
+                      },
+                      () => _save(silent: true),
+                    ),
+                    _sliderRow(
+                      'Daily loss stop',
+                      'Halt at -${s.risk.maxDailyLossPct.toStringAsFixed(1)}%',
                       s.risk.maxDailyLossPct,
                       0.5,
-                      10.0,
+                      30.0,
                       (v) {
                         setState(
                             () => s.risk = s.risk.copyWith(maxDailyLossPct: v));
@@ -679,7 +706,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       () => _save(silent: true),
                     ),
                     _sliderRow(
-                      'Take profit',
+                      'Profit point',
                       '${s.risk.takeProfitAtrMult.toStringAsFixed(1)} × ATR',
                       s.risk.takeProfitAtrMult,
                       1.0,
@@ -689,6 +716,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             s.risk = s.risk.copyWith(takeProfitAtrMult: v));
                       },
                       () => _save(silent: true),
+                    ),
+                    _switchRow(
+                      'Let winners run past the profit point',
+                      'Off sells the whole trade at the profit point. On locks a stop there so a further move can stay open. The daily goal is not a cap either way.',
+                      s.risk.letWinnersRun,
+                      (v) {
+                        setState(() => s.risk = s.risk.copyWith(letWinnersRun: v));
+                        _save(silent: true);
+                      },
                     ),
                     _sliderRow(
                       'Trailing stop',

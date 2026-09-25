@@ -7,6 +7,8 @@ class RiskConfig {
     this.maxOpenPositions = 3,
     this.maxExposurePct = 60,
     this.maxDailyLossPct = 2.0,
+    this.dailyProfitGoalPct = 30.0,
+    this.letWinnersRun = false,
     this.stopLossAtrMult = 1.5,
     this.takeProfitAtrMult = 2.5,
     this.minConfidenceToTrade = 0.35,
@@ -30,6 +32,14 @@ class RiskConfig {
 
   /// Halt for the day after losing this % of equity.
   final double maxDailyLossPct;
+
+  /// A daily profit milestone. Reaching it does not halt, size up, or refuse
+  /// a later gain. 0 disables the milestone.
+  final double dailyProfitGoalPct;
+
+  /// When true, the profit point locks a stop instead of selling the whole
+  /// trade, so a further move can stay open.
+  final bool letWinnersRun;
 
   final double stopLossAtrMult;
   final double takeProfitAtrMult;
@@ -58,6 +68,8 @@ class RiskConfig {
         'maxOpenPositions': maxOpenPositions,
         'maxExposurePct': maxExposurePct,
         'maxDailyLossPct': maxDailyLossPct,
+        'dailyProfitGoalPct': dailyProfitGoalPct,
+        'letWinnersRun': letWinnersRun,
         'stopLossAtrMult': stopLossAtrMult,
         'takeProfitAtrMult': takeProfitAtrMult,
         'minConfidenceToTrade': minConfidenceToTrade,
@@ -82,6 +94,9 @@ class RiskConfig {
           (json['maxExposurePct'] as num?)?.toDouble() ?? d.maxExposurePct,
       maxDailyLossPct:
           (json['maxDailyLossPct'] as num?)?.toDouble() ?? d.maxDailyLossPct,
+      dailyProfitGoalPct: (json['dailyProfitGoalPct'] as num?)?.toDouble() ??
+          d.dailyProfitGoalPct,
+      letWinnersRun: json['letWinnersRun'] as bool? ?? d.letWinnersRun,
       stopLossAtrMult:
           (json['stopLossAtrMult'] as num?)?.toDouble() ?? d.stopLossAtrMult,
       takeProfitAtrMult:
@@ -114,6 +129,8 @@ class RiskConfig {
     int? maxOpenPositions,
     double? maxExposurePct,
     double? maxDailyLossPct,
+    double? dailyProfitGoalPct,
+    bool? letWinnersRun,
     double? stopLossAtrMult,
     double? takeProfitAtrMult,
     double? minConfidenceToTrade,
@@ -131,6 +148,8 @@ class RiskConfig {
         maxOpenPositions: maxOpenPositions ?? this.maxOpenPositions,
         maxExposurePct: maxExposurePct ?? this.maxExposurePct,
         maxDailyLossPct: maxDailyLossPct ?? this.maxDailyLossPct,
+        dailyProfitGoalPct: dailyProfitGoalPct ?? this.dailyProfitGoalPct,
+        letWinnersRun: letWinnersRun ?? this.letWinnersRun,
         stopLossAtrMult: stopLossAtrMult ?? this.stopLossAtrMult,
         takeProfitAtrMult: takeProfitAtrMult ?? this.takeProfitAtrMult,
         minConfidenceToTrade: minConfidenceToTrade ?? this.minConfidenceToTrade,
@@ -331,4 +350,28 @@ class RiskManager {
       targetPrice: targetPrice,
     );
   }
+}
+
+/// True when today's gain has reached the goal. This is a milestone, not a halt.
+bool dailyProfitGoalReached({
+  required double dayPnlPct,
+  required double goalPct,
+}) {
+  if (goalPct <= 0) return false;
+  return dayPnlPct + 1e-9 >= goalPct;
+}
+
+/// Once the planned profit price is reached, move the stop to that price so
+/// the planned gain is locked and a further move can stay open.
+/// Returns null when the stop should not change.
+double? lockedProfitStop({
+  required bool long,
+  required double target,
+  required double currentStop,
+  required bool targetHit,
+  required bool allowMore,
+}) {
+  if (!targetHit || !allowMore) return null;
+  if (long) return target > currentStop ? target : null;
+  return target < currentStop ? target : null;
 }

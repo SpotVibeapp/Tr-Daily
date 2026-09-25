@@ -5,7 +5,7 @@ description: >-
   scores setups with an ensemble + online-ML model, manages risk, and executes
   trades through a pluggable broker (Alpaca paper/live). Paper mode by default.
 publish_to: "none"
-version: 0.1.5+6
+version: 0.1.6+7
 
 environment:
   sdk: ">=3.12.0 <4.0.0"

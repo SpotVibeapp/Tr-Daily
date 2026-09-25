@@ -179,6 +179,69 @@ void main() {
       expect(v.allowed, isFalse);
     });
 
+    test('a profit goal does not halt, even above 30%', () {
+      final rm = RiskManager(config: const RiskConfig(dailyProfitGoalPct: 30));
+      final day = DateTime(2026, 6, 10, 14);
+      expect(rm.enforceDailyLoss(dayPnlPct: 42, day: day), isFalse);
+      expect(rm.isHalted, isFalse);
+      expect(dailyProfitGoalReached(dayPnlPct: 42, goalPct: 30), isTrue);
+      expect(dailyProfitGoalReached(dayPnlPct: 29.9, goalPct: 30), isFalse);
+      expect(dailyProfitGoalReached(dayPnlPct: 80, goalPct: 0), isFalse);
+    });
+
+    test('profit-point lock does not cap a tighter trail', () {
+      expect(
+        lockedProfitStop(
+          long: true,
+          target: 105,
+          currentStop: 97,
+          targetHit: true,
+          allowMore: true,
+        ),
+        105,
+      );
+      expect(
+        lockedProfitStop(
+          long: true,
+          target: 105,
+          currentStop: 106,
+          targetHit: true,
+          allowMore: true,
+        ),
+        isNull,
+      );
+      expect(
+        lockedProfitStop(
+          long: false,
+          target: 95,
+          currentStop: 103,
+          targetHit: true,
+          allowMore: true,
+        ),
+        95,
+      );
+      expect(
+        lockedProfitStop(
+          long: true,
+          target: 105,
+          currentStop: 97,
+          targetHit: true,
+          allowMore: false,
+        ),
+        isNull,
+      );
+    });
+
+    test('saved settings pick up the 30% goal default', () {
+      final back = RiskConfig.fromJson(const <String, dynamic>{});
+      expect(back.dailyProfitGoalPct, 30);
+      expect(back.letWinnersRun, isFalse);
+      expect(back.maxDailyLossPct, 2);
+      final kept = back.copyWith(maxDailyLossPct: 4);
+      expect(kept.dailyProfitGoalPct, 30);
+      expect(kept.letWinnersRun, isFalse);
+    });
+
     test('re-arms on a new day', () {
       final rm = RiskManager(config: const RiskConfig(maxDailyLossPct: 2));
       final day1 = DateTime(2026, 6, 10, 15);

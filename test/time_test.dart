@@ -47,6 +47,53 @@ void main() {
       expect(inFlattenWindow(after), isFalse);
     });
 
+    test('extended session is 4:00–20:00 ET, not overnight', () {
+      // Wed 2026-06-10. EDT is UTC-4.
+      final pre = DateTime.utc(2026, 6, 10, 12); // 08:00 ET
+      final after = DateTime.utc(2026, 6, 10, 21); // 17:00 ET
+      final night = DateTime.utc(2026, 6, 11, 1); // 21:00 ET
+      expect(isMarketOpen(pre), isFalse);
+      expect(isExtendedSession(pre), isTrue);
+      expect(isAfterHours(after), isTrue);
+      expect(isExtendedSession(night), isFalse);
+      expect(
+        canOpenNewTrade(
+          force: false,
+          sessionOpen: false,
+          extendedHoursEnabled: true,
+          extendedSession: true,
+          tradeWhileClosed: false,
+          liveBroker: true,
+          halted: false,
+        ),
+        isTrue,
+      );
+      expect(
+        canOpenNewTrade(
+          force: false,
+          sessionOpen: false,
+          extendedHoursEnabled: false,
+          extendedSession: false,
+          tradeWhileClosed: true,
+          liveBroker: true,
+          halted: false,
+        ),
+        isFalse,
+      );
+      expect(
+        canOpenNewTrade(
+          force: false,
+          sessionOpen: true,
+          extendedHoursEnabled: false,
+          extendedSession: true,
+          tradeWhileClosed: false,
+          liveBroker: false,
+          halted: true,
+        ),
+        isFalse,
+      );
+    });
+
     test('closed on weekends', () {
       expect(isMarketOpen(DateTime.utc(2026, 6, 13, 15)), isFalse); // Sat
       expect(isMarketOpen(DateTime.utc(2026, 6, 14, 15)), isFalse); // Sun

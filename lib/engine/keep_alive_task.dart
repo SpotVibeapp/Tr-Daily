@@ -44,13 +44,18 @@ class TradingKeepAliveHandler extends TaskHandler {
       return;
     }
     state.engine?.start(periodic: false);
+    final live = state.settings.liveTrading;
     await state.writeKeepAliveStatus(
       running: true,
-      note: 'Scanning. Closing the app does not stop this.',
+      note: live
+          ? 'LIVE scan. Closing the app does not stop orders.'
+          : 'Scanning. Closing the app does not stop this.',
     );
     await _note(
       _title(state),
-      'Closing the app does not stop this. Not a profit guarantee.',
+      live
+          ? 'LIVE. Closing the app does not stop orders. Tap Stop to stop.'
+          : 'Closing the app does not stop this. Not a profit guarantee.',
     );
   }
 

@@ -163,13 +163,7 @@ class DashboardScreen extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              state.engineRunning
-                                  ? (state.backgroundRunning
-                                      ? 'Keeps scanning if you close the app. Notification stays up.'
-                                      : 'Scanning ${state.settings.watchlist.length} watchlist'
-                                          '${state.budget.last.sleeve.isEmpty ? '' : ' + ${state.budget.last.sleeve.length} budget'}'
-                                          ' names every ${state.settings.scanIntervalSeconds}s')
-                                  : 'Start it to scan & trade automatically',
+                              _engineCaption(state),
                               style: const TextStyle(
                                 color: TrTheme.textMuted,
                                 fontSize: 11.5,
@@ -187,6 +181,15 @@ class DashboardScreen extends StatelessWidget {
                         },
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _goalCaption(state),
+                  style: const TextStyle(
+                    color: TrTheme.textMuted,
+                    fontSize: 11.5,
+                    height: 1.35,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -654,4 +657,44 @@ class _NotificationBell extends StatelessWidget {
       ],
     );
   }
+}
+
+String _engineCaption(AppState state) {
+  if (!state.engineRunning) {
+    return 'Off until you turn it on. On Android it can keep scanning after you close the app.';
+  }
+  if (state.settings.liveTrading && state.backgroundRunning) {
+    return 'LIVE. Closing the app does not stop orders. Turn this off to stop.';
+  }
+  if (state.settings.liveTrading) {
+    return 'LIVE. Keep-alive is not running, so leaving the app can stop orders.';
+  }
+  if (state.backgroundRunning) {
+    return 'Keeps scanning if you close the app. Notification stays up.';
+  }
+  final sleeve = state.budget.last.sleeve.length;
+  return 'Scanning ${state.settings.watchlist.length} watchlist'
+      '${sleeve == 0 ? '' : ' + $sleeve budget'}'
+      ' names every ${state.settings.scanIntervalSeconds}s';
+}
+
+String _goalCaption(AppState state) {
+  final risk = state.settings.risk;
+  final pnl = state.account?.dayPnlPct;
+  final goal = risk.dailyProfitGoalPct;
+  final reached =
+      pnl != null && dailyProfitGoalReached(dayPnlPct: pnl, goalPct: goal);
+  final loss = risk.maxDailyLossPct.toStringAsFixed(1);
+  final stop = risk.stopLossAtrMult.toStringAsFixed(1);
+  final target = risk.takeProfitAtrMult.toStringAsFixed(1);
+  final run = risk.letWinnersRun
+      ? 'A winner can keep going past that point.'
+      : 'The whole trade sells at that point.';
+  if (reached) {
+    return 'Daily goal of ${goal.toStringAsFixed(0)}% is reached. More is allowed. Loss stop is -$loss%. This is not a guarantee.';
+  }
+  final goalText = goal <= 0
+      ? 'No daily profit goal.'
+      : 'Daily goal ${goal.toStringAsFixed(0)}% — not a cap, and not a promise.';
+  return '$goalText Loss stop -$loss% halts the day. Per trade: stop ${stop}× ATR, profit point ${target}× ATR. $run';
 }

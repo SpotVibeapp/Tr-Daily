@@ -204,20 +204,17 @@ class TraderEngine {
     if (_tickBusy) return;
     final now = _clock();
     if (state == EngineState.stopped && !force) return;
-    if (risk.isHalted && state != EngineState.halted) {
-      state = EngineState.halted;
-    }
+    // A new session re-arms the daily loss stop without a second Start tap.
+    // Closing the app is not a stop. Only Stop, Force Stop, or the phone
+    // being off stops the scan. The loss stop is the exception the user asked
+    // for, and it lasts for that day only.
+    risk.checkNewDay(now);
     final sessionOpen = isMarketOpen(now);
-    if (!sessionOpen && !settings.tradeWhileClosed && !force) {
-      _emit('info', 'market closed (${sessionLabel(now)}) — scan skipped');
-      return;
-    }
     if (risk.isHalted) {
       state = EngineState.halted;
-      _emit('halt', 'halted: ${risk.haltReason}');
-      return;
+    } else {
+      state = EngineState.running;
     }
-    state = EngineState.running;
     cycleCount++;
     _tickBusy = true;
     try {
@@ -328,21 +325,42 @@ class TraderEngine {
       final positions = await broker.getPositions();
       await _reviewNews(signals, positions, now);
 
-      // 3) Daily-loss circuit breaker.
+      // 3) Daily-loss stop. A profit goal is not a stop and must not halt.
+      var closedForLoss = false;
       if (risk.enforceDailyLoss(dayPnlPct: account.dayPnlPct, day: now)) {
         state = EngineState.halted;
-        _emit('halt', 'daily loss limit hit — closing positions & halting');
-        for (final p in positions) {
-          await _safe(() => broker.closePosition(p.symbol));
+        final et = toEastern(now);
+        final key = '${et.year}-${et.month}-${et.day}|daily-loss-close';
+        if (_notedOnce.add(key)) {
+          _emit(
+            'halt',
+            'Daily loss stop hit — closing positions. New trades wait until '
+                'the next session. Scanning continues. ${risk.haltReason ?? ''}',
+          );
+          for (final p in positions) {
+            await _safe(() => broker.closePosition(p.symbol));
+          }
+          closedForLoss = true;
         }
-        return;
+      } else if (dailyProfitGoalReached(
+        dayPnlPct: account.dayPnlPct,
+        goalPct: settings.risk.dailyProfitGoalPct,
+      )) {
+        _noteOnce(
+          now,
+          'Daily profit goal of '
+              '${settings.risk.dailyProfitGoalPct.toStringAsFixed(0)}% is '
+              'reached. Scanning continues. More profit is allowed. This is '
+              'not a guarantee.',
+          notedDay: true,
+        );
       }
 
       // 4) Day trades are closed before the bell so they do not become holds.
       final flattening = settings.flattenBeforeClose &&
           !settings.allowOvernightHolds &&
           inFlattenWindow(now);
-      if (flattening && positions.isNotEmpty) {
+      if (!closedForLoss && flattening && positions.isNotEmpty) {
         _noteOnce(
           now,
           'Closed into the session end — day trades are not held overnight',
@@ -360,9 +378,21 @@ class TraderEngine {
       final livePositions = flattening
           ? await broker.getPositions()
           : positions;
-      await _manageExits(signals, livePositions);
+      if (!closedForLoss) {
+        await _manageExits(signals, livePositions, now);
+      }
 
-      // 6) New entries. Skipped in the flatten window.
+      // 6) New entries. Skipped in the flatten window, after a loss stop, and
+      // outside a session that can actually trade. The scan itself continues.
+      final allowEntries = canOpenNewTrade(
+        force: force,
+        sessionOpen: sessionOpen,
+        extendedHoursEnabled: settings.extendedHours,
+        extendedSession: isExtendedSession(now),
+        tradeWhileClosed: settings.tradeWhileClosed,
+        liveBroker: broker.mode == BrokerMode.live,
+        halted: risk.isHalted,
+      );
       if (flattening) {
         _noteOnce(
           now,
@@ -377,7 +407,16 @@ class TraderEngine {
               'turns on at \$25,000. Open positions are still managed.',
           notedDay: true,
         );
-      } else if (sessionOpen || settings.tradeWhileClosed) {
+      } else if (!allowEntries) {
+        if (!risk.isHalted) {
+          _noteOnce(
+            now,
+            'Market is closed. Still scanning. New trades wait for the next '
+                'session. Closing the app does not stop this.',
+            notedDay: true,
+          );
+        }
+      } else if (allowEntries) {
         final openPositions = await broker.getPositions();
         final heldSymbols = openPositions.map((p) => p.symbol).toSet();
         final cap = settings.fitToBudget ? plan.maxSharePrice : null;
@@ -480,8 +519,22 @@ class TraderEngine {
         }
         _noteSkips(now, quiet: quiet, oversized: oversized);
       }
-      _emit('scan',
-          'scan #${signals.length} symbols · ${signals.where((s) => s.stance != Stance.flat).length} setups');
+      final scanBits = <String>[
+        'scan #${signals.length} symbols',
+        '${signals.where((s) => s.stance != Stance.flat).length} setups',
+      ];
+      if (broker.mode == BrokerMode.live) scanBits.add('LIVE');
+      if (risk.isHalted) {
+        scanBits.add('daily loss stop');
+      } else if (!allowEntries) {
+        scanBits.add('market closed, still scanning');
+      } else if (dailyProfitGoalReached(
+        dayPnlPct: account.dayPnlPct,
+        goalPct: settings.risk.dailyProfitGoalPct,
+      )) {
+        scanBits.add('daily goal reached, still scanning');
+      }
+      _emit('scan', scanBits.join(' · '));
     } catch (e) {
       lastError = e.toString();
       lastErrorAt = now;
@@ -592,6 +645,7 @@ class TraderEngine {
   Future<void> _manageExits(
     List<SignalScore> signals,
     List<Position> positions,
+    DateTime now,
   ) async {
     final scoreBySymbol = <String, SignalScore>{
       for (final s in signals) s.symbol: s,
@@ -633,10 +687,38 @@ class TraderEngine {
         }
       }
 
-      // --- Hard stop / target vs current price ---
-      final stopHit = long ? px <= effectiveStop : px >= effectiveStop;
+      // --- Hard stop / profit point vs current price ---
+      // A profit point is customizable. With letWinnersRun it locks a stop
+      // there instead of selling the whole trade, so more can stay open.
+      var stopHit = long ? px <= effectiveStop : px >= effectiveStop;
       final targetHit = long ? px >= meta.target : px <= meta.target;
-      if (stopHit || targetHit) {
+      if (targetHit && settings.risk.letWinnersRun) {
+        final locked = lockedProfitStop(
+          long: long,
+          target: meta.target,
+          currentStop: effectiveStop,
+          targetHit: true,
+          allowMore: true,
+        );
+        if (locked != null) {
+          meta.initialStop = long
+              ? (locked > meta.initialStop ? locked : meta.initialStop)
+              : (locked < meta.initialStop ? locked : meta.initialStop);
+          effectiveStop = long
+              ? (locked > effectiveStop ? locked : effectiveStop)
+              : (locked < effectiveStop ? locked : effectiveStop);
+          _noteOnce(
+            now,
+            '${p.symbol}: profit point reached. Stop moved to that price so a '
+                'further move can stay open. Not a guarantee.',
+            notedDay: true,
+          );
+        }
+        final lockedAtTarget = (effectiveStop - meta.target).abs() < 0.0001;
+        final stillThrough = long ? px >= meta.target : px <= meta.target;
+        if (lockedAtTarget && stillThrough) stopHit = false;
+      }
+      if (stopHit || (targetHit && !settings.risk.letWinnersRun)) {
         final why = stopHit
             ? (effectiveStop != meta.initialStop ? 'trailing stop' : 'stop loss')
             : 'take profit';
@@ -775,7 +857,7 @@ class TraderEngine {
         side: entrySide == Stance.long ? OrderSide.buy : OrderSide.sell,
         type: OrderType.market,
         qty: qty,
-        takeProfit: isLive ? targetPx : null,
+        takeProfit: isLive && !settings.risk.letWinnersRun ? targetPx : null,
         stopLoss: isLive ? stopPx : null,
         extendedHours: settings.extendedHours,
       ));

@@ -239,6 +239,7 @@ class AppState extends ChangeNotifier {
     // Diff against the last *persisted* snapshot — callers often mutate the
     // live settings object in place, so object identity proves nothing.
     final prev = await _json.readObject(_kSettings);
+    final wasRunning = backgroundRunning || (engine?.isRunning ?? false);
     final brokerChanged = prev != null &&
         (prev['brokerMode'] != next.brokerMode.name ||
             prev['keyId'] != next.keys.keyId ||
@@ -268,7 +269,11 @@ class AppState extends ChangeNotifier {
       (broker as PaperBroker).setAllowShort(settings.allowShort);
     }
     _log('info', 'settings saved');
-    if (backgroundRunning) {
+    // Switching into live used to rebuild the engine and leave it stopped.
+    // If it was already running, start it again. Closing the app is not a stop.
+    if (brokerChanged && wasRunning && !backgroundRunning) {
+      await startEngine();
+    } else if (backgroundRunning) {
       final intervalChanged = prev != null &&
           prev['scanIntervalSeconds'] != settings.scanIntervalSeconds;
       if (!settings.keepRunningWhenClosed) {
@@ -337,7 +342,9 @@ class AppState extends ChangeNotifier {
         _startKeepAlivePoll();
         _log(
           'info',
-          'Engine keeps running if you leave or close the app. A notification stays up. Force Stop in Android settings still stops it. This does not guarantee a profit.',
+          settings.liveTrading
+              ? 'LIVE engine keeps running if you leave or close the app. Real orders can still be sent until you turn it off, tap Stop on the notification, or the phone is off. A daily loss stop can halt the rest of the day. A profit goal does not. This does not guarantee a profit.'
+              : 'Engine keeps running if you leave or close the app. A notification stays up. Force Stop in Android settings still stops it. This does not guarantee a profit.',
         );
         notifyListeners();
         return;
