@@ -48,6 +48,7 @@ class AppSettings {
     this.useLocalPaper = false,
     this.keepRunningWhenClosed = true,
     this.engineArmed = false,
+    this.useNews = true,
   })  : keys = keys ?? const TradingKeys(keyId: '', secretKey: ''),
         watchlist = watchlist ?? List<String>.from(defaultWatchlist),
         risk = risk ?? const RiskConfig(),
@@ -122,6 +123,11 @@ class AppSettings {
   /// resume after the process is killed, without starting a fresh install.
   bool engineArmed;
 
+  /// Read company and world headlines before every new trade and on each
+  /// scan of an open position. Feeds can be late or wrong. This does not
+  /// remove the risk of a loss.
+  bool useNews;
+
   bool get liveTrading => brokerMode == BrokerMode.live && keys.isConfigured;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -151,6 +157,7 @@ class AppSettings {
         'useLocalPaper': useLocalPaper,
         'keepRunningWhenClosed': keepRunningWhenClosed,
         'engineArmed': engineArmed,
+        'useNews': useNews,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -220,6 +227,7 @@ class AppSettings {
       keepRunningWhenClosed: json['keepRunningWhenClosed'] as bool? ??
           defaults.keepRunningWhenClosed,
       engineArmed: json['engineArmed'] as bool? ?? defaults.engineArmed,
+      useNews: json['useNews'] as bool? ?? defaults.useNews,
     );
   }
 }

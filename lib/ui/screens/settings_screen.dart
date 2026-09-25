@@ -556,6 +556,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       },
                     ),
                     _switchRow(
+                      'Review news before every trade',
+                      'Reads company headlines and world news on each scan, including after you close the app. A severe story can block or close that name. A developing story is listed before the chart confirms. Feeds can be late, missing, or wrong. This does not remove the risk of a loss.',
+                      s.useNews,
+                      (v) {
+                        setState(() => s.useNews = v);
+                        _save(silent: true);
+                      },
+                    ),
+                    _switchRow(
                       'Keep running when closed',
                       'Android shows a notification and keeps scanning if you leave or swipe the app away. Force Stop in system settings still stops it. The phone being off stops it too.',
                       s.keepRunningWhenClosed,

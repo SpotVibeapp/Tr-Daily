@@ -7,6 +7,7 @@ import '../../data/models.dart';
 import '../../engine/budget.dart';
 import '../../engine/scale.dart';
 import '../../risk/risk_manager.dart';
+import '../../analysis/news_review.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -191,6 +192,7 @@ class DashboardScreen extends StatelessWidget {
                 const SizedBox(height: 12),
 
                 _BudgetBanner(state: state),
+                _NewsBanner(state: state),
 
                 if (state.risk.isHalted)
                   Container(
@@ -439,6 +441,57 @@ class _SessionBadge extends StatelessWidget {
     return TagChip(
       label: sessionLabel(now),
       color: open ? TrTheme.up : TrTheme.warn,
+    );
+  }
+}
+
+class _NewsBanner extends StatelessWidget {
+  const _NewsBanner({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!state.settings.useNews) return const SizedBox.shrink();
+    final review = state.engine?.lastNewsReview ?? state.newsReview;
+    final summary = review?.summary ?? state.backgroundNewsSummary;
+    if (summary == null || summary.isEmpty) return const SizedBox.shrink();
+    final opportunities = review?.opportunities ?? const <NewsOpportunity>[];
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: TrTheme.surface2,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: TrTheme.outline),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'NEWS REVIEW',
+            style: TextStyle(
+              color: TrTheme.textMuted,
+              fontSize: 11,
+              letterSpacing: 1,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            summary,
+            style: const TextStyle(fontSize: 12.5, height: 1.35),
+          ),
+          for (final opp in opportunities.take(3)) ...[
+            const SizedBox(height: 6),
+            Text(
+              opp.note,
+              style: const TextStyle(color: TrTheme.textMuted, fontSize: 11.5, height: 1.3),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

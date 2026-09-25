@@ -9,6 +9,7 @@ import 'package:tr_daily/core/config.dart';
 import 'package:tr_daily/core/notifications.dart';
 import 'package:tr_daily/core/server_config.dart';
 import 'package:tr_daily/data/market_data_source.dart';
+import 'package:tr_daily/data/news_feed.dart';
 import 'package:tr_daily/engine/scanner.dart';
 import 'package:tr_daily/engine/trader_engine.dart';
 import 'package:tr_daily/risk/risk_manager.dart';
@@ -92,6 +93,7 @@ void main(List<String> args) async {
     scanner: scanner,
     settings: s,
     risk: risk,
+    news: LiveNewsDesk(),
   );
 
   // Wire Engine Events to Notification Service & Terminal Log

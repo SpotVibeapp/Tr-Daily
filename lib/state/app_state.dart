@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
 import '../analysis/estimator.dart';
+import '../analysis/news_review.dart';
+import '../data/news_feed.dart';
 import '../broker/alpaca_broker.dart';
 import '../broker/paper_broker.dart';
 import '../core/config.dart';
@@ -74,6 +76,11 @@ class AppState extends ChangeNotifier {
   /// True when the Android foreground service owns the scan.
   bool backgroundRunning = false;
   Timer? _keepAlivePoll;
+
+  /// Shared with the engine so a manual scan and a tick do not double-fetch.
+  final NewsDesk newsDesk = LiveNewsDesk();
+  NewsReview? newsReview;
+  String? backgroundNewsSummary;
 
   // ---------------------------------------------------------------- init
 
@@ -171,6 +178,7 @@ class AppState extends ChangeNotifier {
         settings: settings,
         risk: risk,
         budget: budget,
+        news: newsDesk,
       );
 
   StreamSubscription<EngineEvent>? _engineSub;
@@ -436,6 +444,22 @@ class AppState extends ChangeNotifier {
         }
       }
       signals = merged;
+      if (settings.useNews && !backgroundRunning) {
+        try {
+          newsReview = await newsDesk.review(
+            symbols: <String>[
+              ...settings.watchlist,
+              for (final signal in merged) signal.symbol,
+            ],
+            now: DateTime.now(),
+            charts: <String, SignalScore>{
+              for (final signal in merged) signal.symbol.toUpperCase(): signal,
+            },
+          );
+        } catch (e) {
+          newsReview = NewsReview.unavailable(DateTime.now(), '$e');
+        }
+      }
       if (broker is PaperBroker && !backgroundRunning) await _persistPaper();
       _log('scan',
           'manual scan complete · ${merged.length} symbols · source=${out.dataSourceId}');
@@ -595,6 +619,7 @@ class AppState extends ChangeNotifier {
     await _json.writeObject(keepAliveStatusKey, <String, dynamic>{
       'running': running,
       'note': note ?? '',
+      'news': engine?.lastNewsReview?.summary ?? newsReview?.summary ?? '',
       'updatedAt': DateTime.now().toIso8601String(),
       'lines': <Map<String, String>>[
         for (final entry in lines)
@@ -641,6 +666,7 @@ class AppState extends ChangeNotifier {
         positions = await broker.getPositions();
       }
     }
+    backgroundNewsSummary = json['news']?.toString();
     final note = json['note']?.toString() ?? '';
     if (!backgroundRunning && note.startsWith('Android stopped')) {
       lastError = note;

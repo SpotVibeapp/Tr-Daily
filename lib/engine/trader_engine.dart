@@ -10,6 +10,7 @@ import 'day_trade.dart';
 import 'scale.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
+import '../analysis/news_review.dart';
 import '../risk/risk_manager.dart';
 import 'budget.dart';
 import 'scanner.dart';
@@ -52,7 +53,8 @@ class PositionMeta {
 /// Platform-agnostic (dart:async only) so the same engine can run in the app,
 /// a CLI, or a server later. On Android a foreground service calls [tick]
 /// after the UI is closed. Other platforms tick only while the process is
-/// alive. Ticks follow [AppSettings.scanIntervalSeconds] during market hours.
+/// alive. Each tick reviews company and world headlines when a [NewsDesk] is
+/// set, then follows [AppSettings.scanIntervalSeconds] during market hours.
 class TraderEngine {
   TraderEngine({
     required this.broker,
@@ -62,6 +64,7 @@ class TraderEngine {
     required this.risk,
     BudgetSession? budget,
     DateTime Function()? clock,
+    this.news,
   })  : budget = budget ?? BudgetSession(),
         _clock = clock ?? DateTime.now {
     final b = broker;
@@ -77,6 +80,10 @@ class TraderEngine {
   final RiskManager risk;
   final BudgetSession budget;
   final DateTime Function() _clock;
+
+  /// When set, every scan reviews company and world headlines before entries
+  /// and while a position is open. Tests omit it.
+  final NewsDesk? news;
 
   String? _lastBudgetSummary;
   DateTime? _lastBudgetEmitAt;
@@ -94,6 +101,8 @@ class TraderEngine {
   String? lastError;
   int cycleCount = 0;
   List<SignalScore> lastSignals = const <SignalScore>[];
+  NewsReview? lastNewsReview;
+  String? _lastNewsSignature;
 
   /// symbol -> entry-time management state (in-memory; reseeded on restart).
   final Map<String, PositionMeta> _meta = <String, PositionMeta>{};
@@ -317,6 +326,7 @@ class TraderEngine {
       lastSignals = signals;
 
       final positions = await broker.getPositions();
+      await _reviewNews(signals, positions, now);
 
       // 3) Daily-loss circuit breaker.
       if (risk.enforceDailyLoss(dayPnlPct: account.dayPnlPct, day: now)) {
@@ -381,12 +391,33 @@ class TraderEngine {
         final quiet = <String>[];
         final oversized = <String>[];
         for (final sig in ranked) {
-          if (sig.stance == Stance.flat) continue;
           if (heldSymbols.contains(sig.symbol)) continue;
+          final newsDecision = _newsEntry(sig);
+          var side = sig.stance;
+          var sizeMultiplier = 1.0;
+          String? newsNote;
+          if (newsDecision != null) {
+            sizeMultiplier = newsDecision.sizeMultiplier;
+            newsNote = newsDecision.reason;
+            if (newsDecision.action == NewsTradeAction.block ||
+                newsDecision.action == NewsTradeAction.exit) {
+              _noteOnce(now, newsDecision.reason, notedDay: true);
+              continue;
+            }
+            if (newsDecision.action == NewsTradeAction.promoteLong) {
+              side = Stance.long;
+            } else if (newsDecision.action == NewsTradeAction.promoteShort) {
+              side = Stance.short;
+            }
+          }
+          if (side == Stance.flat) continue;
           // Whole shares only. A name above the cash cap is skipped here so
           // the log is one summary, not a denial per ticker every minute.
           if (cap != null && (cap <= 0 || sig.price > cap + 1e-6)) continue;
-          if (blockShorts && sig.stance == Stance.short) continue;
+          if (blockShorts && side == Stance.short) continue;
+          final promoted = newsDecision != null &&
+              (newsDecision.action == NewsTradeAction.promoteLong ||
+                  newsDecision.action == NewsTradeAction.promoteShort);
           final targetPct = targetPctOfPrice(sig) ?? 0;
           final riskPct = convictionRiskPct(
             basePct: settings.risk.riskPerTradePct,
@@ -406,7 +437,7 @@ class TraderEngine {
               notedDay: true,
             );
           }
-          if (settings.dayTradeEdge) {
+          if (settings.dayTradeEdge && !promoted) {
             final verdict = risk.entry(
               account: account,
               positions: openPositions,
@@ -442,7 +473,9 @@ class TraderEngine {
             openPositions,
             now,
             sizingEquity: settings.scaleWithBalance ? equity : null,
-            riskPerTradePct: riskPct,
+            riskPerTradePct: riskPct * sizeMultiplier,
+            side: side,
+            newsNote: sizeMultiplier < 1 ? newsNote : null,
           );
         }
         _noteSkips(now, quiet: quiet, oversized: oversized);
@@ -456,6 +489,75 @@ class TraderEngine {
     } finally {
       _tickBusy = false;
     }
+  }
+
+  Future<void> _reviewNews(
+    List<SignalScore> signals,
+    List<Position> positions,
+    DateTime now,
+  ) async {
+    final desk = news;
+    if (!settings.useNews || desk == null) {
+      lastNewsReview = null;
+      return;
+    }
+    final symbols = <String>[
+      for (final position in positions) position.symbol,
+      for (final symbol in settings.watchlist) symbol,
+      for (final signal in signals) signal.symbol,
+    ];
+    try {
+      final review = await desk.review(
+        symbols: symbols,
+        now: now,
+        charts: <String, SignalScore>{
+          for (final signal in signals) signal.symbol.toUpperCase(): signal,
+        },
+      );
+      lastNewsReview = review;
+      if (review.signature != _lastNewsSignature) {
+        _lastNewsSignature = review.signature;
+        _emit('news', review.summary);
+      }
+    } catch (e) {
+      lastNewsReview = NewsReview.unavailable(now, '$e');
+      if (lastNewsReview!.signature != _lastNewsSignature) {
+        _lastNewsSignature = lastNewsReview!.signature;
+        _emit('error', lastNewsReview!.summary);
+      }
+    }
+  }
+
+  NewsTradeDecision? _newsEntry(SignalScore sig) {
+    final review = lastNewsReview;
+    if (!settings.useNews || review == null) return null;
+    return decideTrade(
+      review: review,
+      symbol: sig.symbol,
+      chartStance: sig.stance,
+      chartScore: sig.score,
+      chartConfidence: sig.confidence,
+      enterThreshold: settings.ensemble.enterThreshold,
+      minConfidence: settings.ensemble.minConfidence,
+    );
+  }
+
+  String? _newsExitReason(Position position) {
+    final review = lastNewsReview;
+    if (!settings.useNews || review == null) return null;
+    final decision = decideTrade(
+      review: review,
+      symbol: position.symbol,
+      chartStance: position.short ? Stance.short : Stance.long,
+      chartScore: 0,
+      chartConfidence: 1,
+      enterThreshold: settings.ensemble.enterThreshold,
+      minConfidence: settings.ensemble.minConfidence,
+      heldLong: !position.short,
+      heldShort: position.short,
+    );
+    if (decision.action != NewsTradeAction.exit) return null;
+    return decision.reason;
   }
 
   /// Current ATR estimate implied by a signal's suggested stop.
@@ -495,6 +597,11 @@ class TraderEngine {
       for (final s in signals) s.symbol: s,
     };
     for (final p in positions) {
+      final newsExit = _newsExitReason(p);
+      if (newsExit != null) {
+        await _close(p, newsExit);
+        continue;
+      }
       final sig = scoreBySymbol[p.symbol];
       final meta = _metaFor(p, sig);
       final px = sig?.price ?? p.currentPrice;
@@ -634,14 +741,17 @@ class TraderEngine {
     DateTime now, {
     double? sizingEquity,
     double? riskPerTradePct,
+    Stance? side,
+    String? newsNote,
   }) async {
+    final entrySide = side ?? sig.stance;
     final atr = _atrFromSignal(sig);
     final verdict = risk.entry(
       account: account,
       positions: positions,
       price: sig.price,
       atr: atr,
-      stance: sig.stance,
+      stance: entrySide,
       confidence: sig.confidence,
       day: now,
       sizingEquity: sizingEquity,
@@ -662,7 +772,7 @@ class TraderEngine {
       final isLive = broker.mode == BrokerMode.live;
       final order = await broker.submitOrder(OrderRequest(
         symbol: sig.symbol,
-        side: sig.stance == Stance.long ? OrderSide.buy : OrderSide.sell,
+        side: entrySide == Stance.long ? OrderSide.buy : OrderSide.sell,
         type: OrderType.market,
         qty: qty,
         takeProfit: isLive ? targetPx : null,
@@ -680,10 +790,11 @@ class TraderEngine {
       );
 
       _emit('trade',
-          '${sig.stance == Stance.long ? 'BOUGHT' : 'SHORTED'} ${qty.toStringAsFixed(0)} '
+          '${entrySide == Stance.long ? 'BOUGHT' : 'SHORTED'} ${qty.toStringAsFixed(0)} '
           '${sig.symbol} @ ~\$${sig.price.toStringAsFixed(2)} · score ${sig.scorePct} '
           'conf ${(sig.confidence * 100).round()}% · stop \$${stopPx?.toStringAsFixed(2)} '
-          'target \$${targetPx?.toStringAsFixed(2)}',
+          'target \$${targetPx?.toStringAsFixed(2)}'
+          '${newsNote == null ? '' : ' · $newsNote'}',
           signal: sig,
           symbol: sig.symbol);
 

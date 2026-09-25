@@ -20,6 +20,11 @@ Per symbol, on the configured interval (default 5-minute bars):
   clustered support/resistance, least-squares trendlines (R²-qualified)
 - **Candlestick patterns**: engulfing, hammer/star, pins, inside bars, strong
   directional bars
+- **News**: company headlines and a world-news feed, reviewed on every scan.
+  A severe recent company story can block or close that name. A feed failure
+  skips new trades in names that could not be checked. Developing stories are
+  listed, not treated as a forecast. Headlines can be late or wrong. This does
+  not remove the risk of a loss.
 
 ## 2. Scoring
 

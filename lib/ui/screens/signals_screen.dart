@@ -50,6 +50,7 @@ class SignalsScreen extends StatelessWidget {
                   child: Text(
                     'Composite score = chart-trend ensemble'
                         '${state.settings.ensemble.useMl ? ' + online ML' : ''}'
+                        '${state.settings.useNews ? ' + news' : ''}'
                         ' · source ${state.scanner.source.id}',
                     style: const TextStyle(color: TrTheme.textMuted, fontSize: 11.5),
                   ),
@@ -65,6 +66,7 @@ class SignalsScreen extends StatelessWidget {
                 for (final sig in state.signals)
                   _SignalCard(
                     signal: sig,
+                    newsNote: _newsNote(state, sig),
                     overBudget: _overBudget(state, sig),
                     tooQuiet: _tooQuiet(state, sig),
                     minTargetPct: state.settings.minTargetPct,
@@ -88,6 +90,11 @@ class SignalsScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+String? _newsNote(AppState state, SignalScore sig) {
+  final review = state.engine?.lastNewsReview ?? state.newsReview;
+  return review?.bySymbol[sig.symbol.toUpperCase()]?.note;
 }
 
 bool _overBudget(AppState state, SignalScore sig) {
@@ -153,6 +160,7 @@ class _SignalCard extends StatelessWidget {
     this.tooQuiet = false,
     this.minTargetPct = 1,
     this.budgetPick = false,
+    this.newsNote,
   });
 
   final SignalScore signal;
@@ -161,6 +169,7 @@ class _SignalCard extends StatelessWidget {
   final bool tooQuiet;
   final double minTargetPct;
   final bool budgetPick;
+  final String? newsNote;
 
   @override
   Widget build(BuildContext context) {
@@ -279,6 +288,13 @@ class _SignalCard extends StatelessWidget {
                 ],
               ],
             ),
+            if (newsNote != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                newsNote!,
+                style: const TextStyle(color: TrTheme.warn, fontSize: 11.5, height: 1.3),
+              ),
+            ],
             const SizedBox(height: 6),
             Wrap(
               spacing: 6,
