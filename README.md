@@ -42,9 +42,21 @@ flutter pub get
 # 2. Generate platform folders (android/ios/…) — repo ships lib-only on purpose
 flutter create --project-name tr_daily .
 
-# 3. Run on a device/emulator
+# 3. Delete the template test that step 2 drops in. It is Flutter's counter
+#    demo (`MyApp`), which does not exist in this project — the app class is
+#    `TrDailyApp`. If it stays, `flutter analyze` / `flutter test` go red on
+#    `creation_with_non_type: The name 'MyApp' isn't a class`.
+#    This project's widget test is test/app_smoke_test.dart.
+rm test/widget_test.dart          # PowerShell/CMD: del test\widget_test.dart
+
+# 4. Run on a device/emulator
 flutter run
 ```
+
+`test/widget_test.dart` is gitignored, so it can never reach CI — but it lives in
+your working tree, so the analyzer and `flutter test` still see it until you
+delete it. It comes back only if a later `flutter create .` scaffolds a file that
+is missing again.
 
 Then in the app:
 
