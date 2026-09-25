@@ -253,7 +253,7 @@ class TraderEngine {
       if (settings.scanListedMarket && pass.universeSize > 0) {
         final where = pass.kind == MarketListKind.backup
             ? 'The full listed list was unavailable, so this pass uses the backup names.'
-            : '${pass.universeSize} listed names, ${listedNamesPerPass} new charts each pass, plus the watchlist every pass.';
+            : '${pass.universeSize} listed names, $listedNamesPerPass new charts each pass, plus the watchlist every pass.';
         _noteOnce(
           now,
           'Listed market scan is on. $where Not every chart at once, and not OTC. This does not guarantee a profit.',

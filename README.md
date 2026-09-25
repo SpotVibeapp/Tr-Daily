@@ -140,7 +140,7 @@ Phased plan in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 Sideload `artifacts/apk/Tr-Daily-v*-arm64-v8a.apk` (about 19 MB). Use the raw file, not the GitHub preview page. If tapping Install leaves the old app in place, uninstall Tr-Daily once and install again. Builds before v0.1.9 were each signed with a different key, so Android will not update them. Uninstalling removes on-phone settings and the paper log. It does not close positions at the broker.
 
-v0.1.10 walks the listed US market. The watchlist is still checked every pass, but a stock does not have to be on it to be traded. The phone charts a slice each pass so the scan can finish.
+v0.1.11 walks the listed US market. The watchlist is still checked every pass, but a stock does not have to be on it to be traded. The phone charts a slice each pass so the scan can finish.
 
 ## Development
 

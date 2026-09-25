@@ -99,10 +99,13 @@ class MarketScan {
     this.readBundled,
     this.loadUniverse,
     DateTime Function()? clock,
-  })  : _client = client ?? http.Client(),
+  })  : _client = client,
         _clock = clock ?? DateTime.now;
 
-  final http.Client _client;
+  final http.Client? _client;
+  http.Client? _ownedClient;
+
+  http.Client get _http => _client ?? (_ownedClient ??= http.Client());
   final Future<String> Function()? readBundled;
 
   /// Test hook. When set, network and the bundled file are not used.
@@ -228,7 +231,7 @@ class MarketScan {
         ? 'https://api.alpaca.markets'
         : 'https://paper-api.alpaca.markets';
     final uri = Uri.parse('$base/v2/assets?status=active&asset_class=us_equity');
-    final response = await _client.get(uri, headers: <String, String>{
+    final response = await _http.get(uri, headers: <String, String>{
       'APCA-API-KEY-ID': keys.keyId,
       'APCA-API-SECRET-KEY': keys.secretKey,
       'Accept': 'application/json',
@@ -246,7 +249,7 @@ class MarketScan {
       'User-Agent': 'Mozilla/5.0',
       'Accept': 'text/plain',
     };
-    final nasdaq = await _client
+    final nasdaq = await _http
         .get(
           Uri.parse(
             'https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt',
@@ -254,7 +257,7 @@ class MarketScan {
           headers: headers,
         )
         .timeout(const Duration(seconds: 20));
-    final other = await _client
+    final other = await _http
         .get(
           Uri.parse(
             'https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt',

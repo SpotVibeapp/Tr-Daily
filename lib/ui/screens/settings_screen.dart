@@ -1253,13 +1253,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     bool value,
     ValueChanged<bool> onChanged,
   ) =>
-      SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text(title, style: const TextStyle(fontSize: 14)),
-        subtitle: Text(subtitle,
-            style: const TextStyle(color: TrTheme.textMuted, fontSize: 11.5)),
-        value: value,
-        onChanged: onChanged,
+      Material(
+        type: MaterialType.transparency,
+        child: SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(title, style: const TextStyle(fontSize: 14)),
+          subtitle: Text(subtitle,
+              style: const TextStyle(color: TrTheme.textMuted, fontSize: 11.5)),
+          value: value,
+          onChanged: onChanged,
+        ),
       );
 
   Widget _sliderRow(
