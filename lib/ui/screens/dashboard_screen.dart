@@ -680,10 +680,9 @@ String _engineCaption(AppState state) {
 
 String _goalCaption(AppState state) {
   final risk = state.settings.risk;
-  final pnl = state.account?.dayPnlPct;
+  final pnl = state.account.dayPnlPct;
   final goal = risk.dailyProfitGoalPct;
-  final reached =
-      pnl != null && dailyProfitGoalReached(dayPnlPct: pnl, goalPct: goal);
+  final reached = dailyProfitGoalReached(dayPnlPct: pnl, goalPct: goal);
   final loss = risk.maxDailyLossPct.toStringAsFixed(1);
   final stop = risk.stopLossAtrMult.toStringAsFixed(1);
   final target = risk.takeProfitAtrMult.toStringAsFixed(1);
@@ -696,5 +695,5 @@ String _goalCaption(AppState state) {
   final goalText = goal <= 0
       ? 'No daily profit goal.'
       : 'Daily goal ${goal.toStringAsFixed(0)}% — not a cap, and not a promise.';
-  return '$goalText Loss stop -$loss% halts the day. Per trade: stop ${stop}× ATR, profit point ${target}× ATR. $run';
+  return '$goalText Loss stop -$loss% halts the day. Per trade: stop $stop× ATR, profit point $target× ATR. $run';
 }
