@@ -2,6 +2,7 @@ import '../core/config.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../risk/risk_manager.dart';
+import 'scale.dart';
 
 /// Listed names the engine may scan when the user's watchlist does not fit
 /// the account. This is a candidate pool, not a buy list and not a search of
@@ -157,11 +158,16 @@ class BudgetSession {
     required AccountInfo account,
     required Iterable<SignalScore> watchlistSignals,
     DateTime? now,
+    ScalePlan? plan,
   }) {
     if (!settings.fitToBudget) return false;
-    final maxPx = maxAffordableSharePrice(account, settings.risk);
+    final maxPx = plan?.maxSharePrice ??
+        maxAffordableSharePrice(account, settings.risk);
     if (maxPx < minSharePrice) return false;
-    if (_watchlistFits(settings, watchlistSignals, maxPx)) return false;
+    final keepLower = plan?.keepLowerPriced ?? false;
+    if (!keepLower && _watchlistFits(settings, watchlistSignals, maxPx)) {
+      return false;
+    }
     return needsQuoteRefresh(maxPx, now ?? _clock());
   }
 
@@ -171,6 +177,7 @@ class BudgetSession {
     required Iterable<SignalScore> watchlistSignals,
     required MarketDataSource source,
     DateTime? now,
+    ScalePlan? plan,
   }) async {
     final clock = now ?? _clock();
     if (!settings.fitToBudget) {
@@ -178,7 +185,8 @@ class BudgetSession {
       return last;
     }
 
-    final maxPx = maxAffordableSharePrice(account, settings.risk);
+    final maxPx = plan?.maxSharePrice ??
+        maxAffordableSharePrice(account, settings.risk);
     final prices = _watchlistPrices(settings, watchlistSignals);
     final skipped = <String>[];
     final affordable = <String>[];
@@ -193,7 +201,10 @@ class BudgetSession {
       }
     }
 
-    final equity = account.equity > 0 ? account.equity : account.cash;
+    final equity = plan != null && plan.dayStartEquity > 0
+        ? plan.dayStartEquity
+        : (account.equity > 0 ? account.equity : account.cash);
+    final keepLower = plan?.keepLowerPriced ?? false;
     final shortNote = equity > 0 && equity < 2000
         ? ' Shorts are skipped under \$2,000 equity.'
         : '';
@@ -212,8 +223,9 @@ class BudgetSession {
     }
 
     // The user's list already has something this account can buy. Do not
-    // go hunting cheaper names out from under a watchlist they chose.
-    if (affordable.isNotEmpty) {
+    // replace it. A larger balance still adds lower-priced names so a
+    // higher-percentage setup is not ignored just because the account grew.
+    if (affordable.isNotEmpty && !keepLower) {
       final parts = <String>[];
       if (skipped.isNotEmpty) {
         parts.add(
@@ -242,18 +254,41 @@ class BudgetSession {
       _quotedMax = maxPx;
     }
 
-    final preferred = settings.budgetShareCeiling <= 0
-        ? defaultPreferredCeiling
-        : settings.budgetShareCeiling;
-    final sleeve = pickSleeve(
-      quotes: _quotes,
-      maxSharePrice: maxPx,
-      preferredCeiling: preferred,
-      exclude: settings.watchlist.map((s) => s.toUpperCase()).toSet(),
-    );
+    final preferred = plan?.cheapCeiling ??
+        (settings.budgetShareCeiling <= 0
+            ? defaultPreferredCeiling
+            : settings.budgetShareCeiling);
+    final exclude = settings.watchlist.map((s) => s.toUpperCase()).toSet();
+    final sleeve = keepLower && affordable.isNotEmpty
+        ? pickBalancedSleeve(
+            quotes: _quotes,
+            maxSharePrice: maxPx,
+            cheapCeiling: preferred,
+            opportunityCeiling: plan?.opportunityCeiling ?? preferred,
+            exclude: exclude,
+          )
+        : pickSleeve(
+            quotes: _quotes,
+            maxSharePrice: maxPx,
+            preferredCeiling: preferred,
+            exclude: exclude,
+          );
 
     final String summary;
-    if (_quotes.isEmpty) {
+    if (keepLower && affordable.isNotEmpty) {
+      if (_quotes.isEmpty) {
+        summary = 'Today\'s start can trade ${affordable.join(', ')}. '
+            'Lower-priced quotes were unavailable, so only the watchlist '
+            'is in this scan.$shortNote';
+      } else if (sleeve.isEmpty) {
+        summary = 'Today\'s start can trade ${affordable.join(', ')}. '
+            'No extra lower-priced name currently fits.$shortNote';
+      } else {
+        summary = 'Today\'s start can trade ${affordable.join(', ')}. '
+            'Still scanning lower-priced names: ${sleeve.join(', ')}.'
+            '$shortNote';
+      }
+    } else if (_quotes.isEmpty) {
       summary = 'Watchlist is too expensive for this account (max one share '
           '\$${maxPx.toStringAsFixed(2)}), and live prices for lower-priced '
           'names were unavailable. No new entries from those names.$shortNote';
@@ -307,6 +342,58 @@ class BudgetSession {
     }
     return prices;
   }
+}
+
+/// Cheap names plus a higher bucket that grows with the account. A large
+/// balance still sees lower-priced stocks; it does not drop them, and it
+/// does not ignore names it can now afford.
+List<String> pickBalancedSleeve({
+  required Map<String, double> quotes,
+  required double maxSharePrice,
+  required double cheapCeiling,
+  required double opportunityCeiling,
+  Set<String> exclude = const <String>{},
+  int cheapCount = 4,
+  int opportunityCount = 4,
+}) {
+  bool inRange(String symbol, double minPx, double maxPx) {
+    if (exclude.contains(symbol)) return false;
+    final px = quotes[symbol];
+    if (px == null || px < BudgetSession.minSharePrice) return false;
+    if (px > maxSharePrice + 1e-9) return false;
+    if (px + 1e-9 < minPx) return false;
+    return px <= maxPx + 1e-9;
+  }
+
+  final cheapCap =
+      cheapCeiling < maxSharePrice ? cheapCeiling : maxSharePrice;
+  final cheap = <String>[];
+  for (final symbol in <String>[
+    ...AffordableUniverse.oftenUnderFive,
+    ...AffordableUniverse.core,
+  ]) {
+    if (cheap.contains(symbol)) continue;
+    if (!inRange(symbol, BudgetSession.minSharePrice, cheapCap)) continue;
+    cheap.add(symbol);
+    if (cheap.length >= cheapCount) break;
+  }
+
+  final oppCap = opportunityCeiling < maxSharePrice
+      ? opportunityCeiling
+      : maxSharePrice;
+  final extra = <String>[];
+  if (oppCap > cheapCap + 0.5) {
+    for (final symbol in <String>[
+      ...AffordableUniverse.core,
+      ...AffordableUniverse.oftenUnderFive,
+    ]) {
+      if (cheap.contains(symbol) || extra.contains(symbol)) continue;
+      if (!inRange(symbol, cheapCap + 0.01, oppCap)) continue;
+      extra.add(symbol);
+      if (extra.length >= opportunityCount) break;
+    }
+  }
+  return <String>[...cheap, ...extra];
 }
 
 /// Prefer names at or under [preferredCeiling]. If none of those fit the

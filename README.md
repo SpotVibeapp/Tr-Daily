@@ -52,8 +52,10 @@ Then in the app:
 2. **Signals** tab runs manual scans with explainable scores.
 3. **Backtest** tab replays history through the same strategy with real execution rules.
 4. **Settings** lets you change the watchlist, intervals, risk, and data provider.
-5. **Small account:** Fit-to-cash is on by default. If one share of the watchlist costs more than 25% of equity, those names are skipped and the engine scans listed stocks that fit, preferring about $5 and under. Preview it with Settings → Preview with $100 paper cash. A $25,000 paper account still trades the default watchlist.
-6. **Day trades, not holds:** Settings → Day trade skips quiet names whose target is under 1% of the share price, and skips a share that would risk more than the risk setting allows. Open positions are sold in the last 15 minutes of the session. This does not guarantee a profit.
+5. **Small account:** Fit-to-cash is on by default. If one share of the watchlist costs more than 25% of equity, those names are skipped and the engine scans listed stocks that fit, preferring about $5 and under.
+6. **Test any paper balance:** Settings → Paper account. Pick $100, $1,000, $25,000, or type an amount, then Set paper cash. That replaces the local simulator only. Alpaca funds are not changed. Turn live mode off first.
+7. **Scale with the day's start:** Size follows the equity the session started with, so a gain or a setback changes the next session instead of freezing the app in a small-account habit. At $25,000 and above, full day trading is available. Below that, a 4th day trade in 5 business days is skipped. Lower-priced names stay in the scan when the balance is high. A strong setup may use up to 2× the risk setting. Overnight holds are optional and off by default. This does not guarantee a profit, and options are not traded.
+8. **Day trades, not holds:** Settings → Day trade skips quiet names whose target is under 1% of the share price, and skips a share that would risk more than the risk setting allows. Open positions are sold in the last 15 minutes unless overnight holds are on. This does not guarantee a profit.
 
 `flutter analyze` and `flutter test` must be green — CI enforces this on every push.
 

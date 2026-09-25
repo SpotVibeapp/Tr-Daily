@@ -4,8 +4,10 @@ import 'dart:convert';
 import '../broker/alpaca_broker.dart';
 import '../broker/paper_broker.dart';
 import '../core/config.dart';
+import '../core/pdt.dart';
 import '../core/time.dart';
 import 'day_trade.dart';
+import 'scale.dart';
 import '../data/market_data_source.dart';
 import '../data/models.dart';
 import '../risk/risk_manager.dart';
@@ -241,12 +243,14 @@ class TraderEngine {
 
       var account = await broker.getAccount();
       var signals = outcome.signals;
+      var plan = _planFor(account, now);
 
       if (budget.shouldScreen(
         settings: settings,
         account: account,
         watchlistSignals: outcome.signals,
         now: now,
+        plan: plan,
       )) {
         _emit(
           'info',
@@ -259,6 +263,7 @@ class TraderEngine {
         watchlistSignals: outcome.signals,
         source: source,
         now: now,
+        plan: plan,
       );
       if (advice.sleeve.isNotEmpty) {
         final have = signals.map((s) => s.symbol.toUpperCase()).toSet();
@@ -294,9 +299,13 @@ class TraderEngine {
             lastErrorAt = now;
           }
           account = await broker.getAccount();
+          plan = _planFor(account, now);
         }
       }
       if (advice.active) _noteBudget(advice.summary, now);
+      if (plan.summary.isNotEmpty) {
+        _noteOnce(now, plan.summary, notedDay: true);
+      }
       lastSignals = signals;
 
       final positions = await broker.getPositions();
@@ -312,8 +321,9 @@ class TraderEngine {
       }
 
       // 4) Day trades are closed before the bell so they do not become holds.
-      final flattening =
-          settings.flattenBeforeClose && inFlattenWindow(now);
+      final flattening = settings.flattenBeforeClose &&
+          !settings.allowOvernightHolds &&
+          inFlattenWindow(now);
       if (flattening && positions.isNotEmpty) {
         _noteOnce(
           now,
@@ -341,14 +351,22 @@ class TraderEngine {
           'No new entries — last 15 minutes, flattening day trades',
           notedDay: true,
         );
+      } else if (plan.pdtBlocked) {
+        _noteOnce(
+          now,
+          'No new entries — ${plan.dayTradeCount} day trades in 5 business '
+              'days, and today\'s start is under \$25,000. Full day trading '
+              'turns on at \$25,000. Open positions are still managed.',
+          notedDay: true,
+        );
       } else if (sessionOpen || settings.tradeWhileClosed) {
         final openPositions = await broker.getPositions();
         final heldSymbols = openPositions.map((p) => p.symbol).toSet();
-        final cap = settings.fitToBudget ? budget.last.maxSharePrice : null;
-        final blockShorts = settings.fitToBudget &&
-            account.equity > 0 &&
-            account.equity < 2000;
-        final equity = account.equity > 0 ? account.equity : account.cash;
+        final cap = settings.fitToBudget ? plan.maxSharePrice : null;
+        final blockShorts = !plan.allowShort;
+        final equity = plan.dayStartEquity > 0
+            ? plan.dayStartEquity
+            : (account.equity > 0 ? account.equity : account.cash);
         final ranked = settings.dayTradeEdge
             ? rankForDayTrade(signals)
             : signals;
@@ -361,6 +379,25 @@ class TraderEngine {
           // the log is one summary, not a denial per ticker every minute.
           if (cap != null && (cap <= 0 || sig.price > cap + 1e-6)) continue;
           if (blockShorts && sig.stance == Stance.short) continue;
+          final targetPct = targetPctOfPrice(sig) ?? 0;
+          final riskPct = convictionRiskPct(
+            basePct: settings.risk.riskPerTradePct,
+            targetPct: targetPct,
+            confidence: sig.confidence,
+            minTargetPct: settings.minTargetPct,
+            enabled: settings.allowConvictionRisk,
+          );
+          if (riskPct > settings.risk.riskPerTradePct + 1e-9) {
+            _noteOnce(
+              now,
+              '${sig.symbol}: larger size — target '
+                  '${targetPct.toStringAsFixed(1)}% with '
+                  '${(sig.confidence * 100).round()}% confidence, risking '
+                  '${riskPct.toStringAsFixed(2)}% of today\'s start. '
+                  'Not a profit guarantee.',
+              notedDay: true,
+            );
+          }
           if (settings.dayTradeEdge) {
             final verdict = risk.entry(
               account: account,
@@ -370,6 +407,8 @@ class TraderEngine {
               stance: sig.stance,
               confidence: sig.confidence,
               day: now,
+              sizingEquity: settings.scaleWithBalance ? equity : null,
+              riskPerTradePct: riskPct,
             );
             if (verdict.allowed) {
               final fit = checkDayTradeVerdict(
@@ -377,7 +416,7 @@ class TraderEngine {
                 verdict: verdict,
                 equity: equity,
                 minTargetPct: settings.minTargetPct,
-                riskPerTradePct: settings.risk.riskPerTradePct,
+                riskPerTradePct: riskPct,
               );
               if (!fit.allowed) {
                 if (fit.skip == DayTradeSkip.oversized) {
@@ -389,7 +428,14 @@ class TraderEngine {
               }
             }
           }
-          await _tryEnter(sig, account, openPositions, now);
+          await _tryEnter(
+            sig,
+            account,
+            openPositions,
+            now,
+            sizingEquity: settings.scaleWithBalance ? equity : null,
+            riskPerTradePct: riskPct,
+          );
         }
         _noteSkips(now, quiet: quiet, oversized: oversized);
       }
@@ -548,12 +594,37 @@ class TraderEngine {
     }
   }
 
+  ScalePlan _planFor(AccountInfo account, DateTime now) {
+    return scalePlan(
+      account: account,
+      settings: settings,
+      dayTradeCount: _dayTradeCount(account, now),
+    );
+  }
+
+  int _dayTradeCount(AccountInfo account, DateTime now) {
+    if (broker is PaperBroker) {
+      final fills = (broker as PaperBroker).fills;
+      return estimatePaperPdt(
+        fills: [
+          for (final f in fills)
+            (symbol: f.symbol, time: f.time, isBuy: f.side == OrderSide.buy),
+        ],
+        equity: dayStartEquityOf(account),
+        now: now,
+      ).dayTradeCount;
+    }
+    return account.dayTradeCount;
+  }
+
   Future<void> _tryEnter(
     SignalScore sig,
     AccountInfo account,
     List<Position> positions,
-    DateTime now,
-  ) async {
+    DateTime now, {
+    double? sizingEquity,
+    double? riskPerTradePct,
+  }) async {
     final atr = _atrFromSignal(sig);
     final verdict = risk.entry(
       account: account,
@@ -563,6 +634,8 @@ class TraderEngine {
       stance: sig.stance,
       confidence: sig.confidence,
       day: now,
+      sizingEquity: sizingEquity,
+      riskPerTradePct: riskPerTradePct,
     );
     if (!verdict.allowed) {
       _emit('info', 'skip ${sig.symbol}: ${verdict.haltReason}');

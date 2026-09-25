@@ -5,6 +5,7 @@ import '../../core/pdt.dart';
 import '../../core/time.dart';
 import '../../data/models.dart';
 import '../../engine/budget.dart';
+import '../../engine/scale.dart';
 import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
@@ -88,6 +89,17 @@ class DashboardScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      if (state.settings.scaleWithBalance) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _scaleLine(state),
+                          style: const TextStyle(
+                            color: TrTheme.textMuted,
+                            fontSize: 12,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 14),
                       Row(
                         children: [
@@ -273,8 +285,25 @@ class DashboardScreen extends StatelessWidget {
 
   /// Pattern-day-trader awareness: broker-reported (live) or estimated from
   /// the paper fill log.
+  String _scaleLine(AppState state) {
+    final plan = scalePlan(
+      account: state.account,
+      settings: state.settings,
+      dayTradeCount: 0,
+    );
+    final band = switch (plan.band) {
+      AccountBand.fullDayTrade => 'Full day trading is available.',
+      AccountBand.building =>
+        'Building — full day trading starts at \$25,000.',
+      AccountBand.micro => 'Small-account range until the next session is higher.',
+    };
+    return 'Sized from today\'s start ${TrTheme.money(plan.dayStartEquity)}. $band';
+  }
+
   PdtSnapshot _pdt() {
-    final equity = state.account.equity;
+    final equity = state.settings.scaleWithBalance
+        ? dayStartEquityOf(state.account)
+        : state.account.equity;
     final brokerIsLive = state.broker.mode == BrokerMode.live;
     if (brokerIsLive) {
       return reportedPdt(
@@ -420,7 +449,13 @@ class _BudgetBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!state.settings.fitToBudget) return const SizedBox.shrink();
-    final maxPx = maxAffordableSharePrice(state.account, state.settings.risk);
+    final maxPx = maxAffordableSharePrice(
+      state.account,
+      state.settings.risk,
+      sizingEquity: state.settings.scaleWithBalance
+          ? dayStartEquityOf(state.account)
+          : null,
+    );
     final snap = state.budget.last;
     final small = maxPx > 0 && maxPx < 80;
     if (!small && !snap.active) return const SizedBox.shrink();
@@ -454,7 +489,8 @@ class _BudgetBanner extends StatelessWidget {
               '(${state.settings.risk.maxPositionPct.round()}% of equity). '
               'More expensive watchlist names are skipped. If none fit, listed '
               'stocks at or under ${TrTheme.money(ceiling)} are scanned instead. '
-              'Not OTC penny stocks.',
+              '${state.settings.scaleWithBalance ? 'A larger balance still scans some lower-priced names. ' : ''}'
+              'Not OTC penny stocks. This does not guarantee a profit.',
               style: const TextStyle(
                 color: TrTheme.textMuted,
                 fontSize: 12,

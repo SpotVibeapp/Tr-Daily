@@ -20,6 +20,9 @@ void main() {
       expect(config.settings.dayTradeEdge, isTrue);
       expect(config.settings.minTargetPct, 1);
       expect(config.settings.flattenBeforeClose, isTrue);
+      expect(config.settings.scaleWithBalance, isTrue);
+      expect(config.settings.allowConvictionRisk, isTrue);
+      expect(config.settings.allowOvernightHolds, isFalse);
       expect(config.settings.notifications.hasWebhook, isFalse);
     });
 

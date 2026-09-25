@@ -62,6 +62,7 @@ confidence = 0.45·trendQuality + 0.30·|signal avg| + 0.15·ADX gate + ML certa
 | Min confidence | 35% | No low-conviction entries |
 | Fit to cash | on | Skip a name when 1 share exceeds 25% of equity or buying power. If the watchlist does not fit, scan listed names, preferring ≤ $5. Not OTC, not fractional shares of the big names. |
 | Day-trade edge | on, 1% target | Skip a setup whose target is under 1% of the share price, or whose forced 1-share size risks more than 2.5× the risk-per-trade setting. Flatten in the last 15 minutes so a day trade is not held overnight. Not a profit guarantee. |
+| Scale with balance | on | Size from the session's starting equity, not the intraday mark. Under $2,000: small-account range, no shorts. From $2,000 to $25,000: step up, and still scan lower-priced names. At $25,000: full day trading (no PDT entry cap). A strong target may use up to 2× the risk setting. Not a profit guarantee. Options are not traded. |
 
 ## 5. Exit logic
 
@@ -83,7 +84,11 @@ never overwrite them — a stop sits where the thesis was invalidated, not
 US pattern-day-trader rule: 4+ round trips in 5 business days without $25k
 equity. The dashboard shows a warning at 3 and a restriction banner at 4
 (broker-reported for live accounts, estimated from the paper fill log).
-Tr-Daily warns — the broker enforces.
+Tr-Daily warns — the broker enforces. With scale-with-balance on, a new
+entry that would be a 4th day trade is also skipped when today's starting
+equity is under $25,000. At $25,000 and above that limit is not applied.
+That is not a promise the broker will accept the order, and not a promise
+of profit.
 
 ## 6. Execution realism
 

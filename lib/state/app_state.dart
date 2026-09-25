@@ -95,7 +95,7 @@ class AppState extends ChangeNotifier {
     // Restore or create the broker.
     if (settings.brokerMode == BrokerMode.live && settings.keys.isConfigured) {
       broker = AlpacaBroker(keys: settings.keys, mode: BrokerMode.live);
-    } else if (settings.keys.isConfigured) {
+    } else if (settings.keys.isConfigured && !settings.useLocalPaper) {
       broker = AlpacaBroker(keys: settings.keys, mode: BrokerMode.paper);
     } else {
       final paperJson = await _json.readObject(_kPaper);
@@ -218,7 +218,8 @@ class AppState extends ChangeNotifier {
     final brokerChanged = prev != null &&
         (prev['brokerMode'] != next.brokerMode.name ||
             prev['keyId'] != next.keys.keyId ||
-            prev['secretKey'] != next.keys.secretKey);
+            prev['secretKey'] != next.keys.secretKey ||
+            prev['useLocalPaper'] != next.useLocalPaper);
     final rebuildData =
         prev != null && prev['dataProvider'] != next.dataProvider.name;
     settings = next;
@@ -247,8 +248,11 @@ class AppState extends ChangeNotifier {
   }
 
   Broker _createBroker(AppSettings s) {
-    if (s.keys.isConfigured) {
-      return AlpacaBroker(keys: s.keys, mode: s.brokerMode);
+    if (s.brokerMode == BrokerMode.live && s.keys.isConfigured) {
+      return AlpacaBroker(keys: s.keys, mode: BrokerMode.live);
+    }
+    if (s.keys.isConfigured && !s.useLocalPaper) {
+      return AlpacaBroker(keys: s.keys, mode: BrokerMode.paper);
     }
     return PaperBroker(startingCash: s.paperStartingCash);
   }
@@ -264,6 +268,7 @@ class AppState extends ChangeNotifier {
     final next = AppSettings.fromJson(settings.toJson());
     next.keys = TradingKeys(keyId: keyId.trim(), secretKey: secret.trim());
     next.brokerMode = mode;
+    next.useLocalPaper = false;
     await updateSettings(next);
     // Verify connectivity.
     final ok = await broker.healthCheck();
@@ -462,11 +467,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> resetPaperAccount() async {
     final next = settings;
+    next.useLocalPaper = true;
     engine?.stop();
     engine?.dispose();
     broker = PaperBroker(startingCash: next.paperStartingCash);
     engine = _buildEngine();
     _wireEngine(engine!);
+    await _json.writeObject(_kSettings, settings.toJson());
     await _persistPaper();
     await refreshAccount();
     _log('info', 'paper account reset to \$${next.paperStartingCash.toStringAsFixed(0)}');

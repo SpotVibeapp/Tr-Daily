@@ -173,8 +173,14 @@ class RiskVerdict {
 /// no buying power will reject the order, and sizing as if it wouldn't is
 /// how a small account gets a surprise rejection (or, worse, a size the
 /// cash cannot cover).
-double maxAffordableSharePrice(AccountInfo account, RiskConfig config) {
-  final equity = account.equity <= 0 ? account.cash : account.equity;
+double maxAffordableSharePrice(
+  AccountInfo account,
+  RiskConfig config, {
+  double? sizingEquity,
+}) {
+  final equity = (sizingEquity != null && sizingEquity > 0)
+      ? sizingEquity
+      : (account.equity <= 0 ? account.cash : account.equity);
   if (equity <= 0 || config.maxPositionPct <= 0) return 0;
   if (account.buyingPower <= 0) return 0;
   final byPosition = equity * config.maxPositionPct / 100;
@@ -231,6 +237,8 @@ class RiskManager {
     required Stance stance,
     required double confidence,
     required DateTime day,
+    double? sizingEquity,
+    double? riskPerTradePct,
   }) {
     checkNewDay(day);
     if (_haltedToday) {
@@ -261,7 +269,11 @@ class RiskManager {
 
     // Same gate as the 1-share fallback below, but with a reason a person
     // can act on: the name is too expensive for this account, not "qty <= 0".
-    final maxShare = maxAffordableSharePrice(account, config);
+    final maxShare = maxAffordableSharePrice(
+      account,
+      config,
+      sizingEquity: sizingEquity,
+    );
     if (maxShare <= 0) {
       return RiskVerdict.denied('no buying power for a new share');
     }
@@ -282,8 +294,11 @@ class RiskManager {
         : price - config.takeProfitAtrMult * a;
 
     // Volatility sizing: risk `riskPerTradePct`% of equity across stop distance.
-    final equity = account.equity <= 0 ? account.cash : account.equity;
-    final riskDollars = equity * config.riskPerTradePct / 100;
+    final equity = (sizingEquity != null && sizingEquity > 0)
+        ? sizingEquity
+        : (account.equity <= 0 ? account.cash : account.equity);
+    final riskPct = riskPerTradePct ?? config.riskPerTradePct;
+    final riskDollars = equity * riskPct / 100;
     var qty = riskDollars / stopDist;
     if (qty <= 0) return RiskVerdict.denied('computed qty <= 0');
 

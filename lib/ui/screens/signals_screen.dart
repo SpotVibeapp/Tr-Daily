@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
 import '../../engine/day_trade.dart';
+import '../../engine/scale.dart';
 import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
 import '../theme.dart';
@@ -91,7 +92,14 @@ class SignalsScreen extends StatelessWidget {
 
 bool _overBudget(AppState state, SignalScore sig) {
   if (!state.settings.fitToBudget) return false;
-  final maxPx = maxAffordableSharePrice(state.account, state.settings.risk);
+  final sizing = state.settings.scaleWithBalance
+      ? dayStartEquityOf(state.account)
+      : null;
+  final maxPx = maxAffordableSharePrice(
+    state.account,
+    state.settings.risk,
+    sizingEquity: sizing,
+  );
   return maxPx > 0 && sig.price > maxPx + 1e-6;
 }
 

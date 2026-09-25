@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../broker/alpaca_broker.dart';
 import '../../broker/paper_broker.dart';
 import '../../core/config.dart';
+import '../../engine/scale.dart';
 import '../../data/models.dart';
 import '../../risk/risk_manager.dart';
 import '../../state/app_state.dart';
@@ -420,10 +421,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         () => _save(silent: true),
                       ),
                       const Text(
-                        'Used only when the watchlist itself does not fit. '
-                        'If no listed name is under that price, the engine '
-                        'uses the next names one share can still buy. A '
-                        'large paper account keeps trading AAPL and the rest.',
+                        'Used when the watchlist itself does not fit. If no listed '
+                        'name is under that price, the engine uses the next '
+                        'names one share can still buy. With scaling on, a '
+                        'larger account still scans some lower-priced names '
+                        'and does not drop the watchlist.',
                         style: TextStyle(
                           color: TrTheme.textMuted,
                           fontSize: 11.5,
@@ -431,6 +433,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                     ],
+                  ],
+                ),
+              ),
+
+              _sectionTitle('SCALE WITH BALANCE'),
+              _card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _scaleCaption(st, s),
+                      style: const TextStyle(
+                        color: TrTheme.textMuted,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _switchRow(
+                      'Scale with today\'s starting balance',
+                      'Position size and the day-trade limit follow the equity '
+                          'the session started with. A gain or a setback changes '
+                          'the next session, not the middle of a trade. At '
+                          '\$25,000 and above, full day trading is available. '
+                          'Below that, a 4th day trade in 5 business days is '
+                          'skipped. Lower-priced names stay in the scan once '
+                          'the account can also afford larger ones. This does '
+                          'not guarantee a profit.',
+                      s.scaleWithBalance,
+                      (v) {
+                        setState(() => s.scaleWithBalance = v);
+                        widget.state.budget.clear();
+                        _save(silent: true);
+                      },
+                    ),
+                    _switchRow(
+                      'Allow a larger size on a strong setup',
+                      'A target at least 2× the minimum, with higher confidence, '
+                          'may risk up to 2× the risk-per-trade setting. Quiet '
+                          'setups stay at the normal size. Still capped by the '
+                          'one-share limit and buying power.',
+                      s.allowConvictionRisk,
+                      (v) {
+                        setState(() => s.allowConvictionRisk = v);
+                        _save(silent: true);
+                      },
+                    ),
                   ],
                 ),
               ),
@@ -466,6 +515,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         },
                         () => _save(silent: true),
                       ),
+                    _switchRow(
+                      'Allow overnight holds',
+                      'Off by default. Leaves a position open past the close. '
+                          'This is not a long-term system, and the app does not '
+                          'trade options.',
+                      s.allowOvernightHolds,
+                      (v) {
+                        setState(() => s.allowOvernightHolds = v);
+                        _save(silent: true);
+                      },
+                    ),
                     _switchRow(
                       'Flatten before the close',
                       'Sell open positions in the last 15 minutes of the '
@@ -846,14 +906,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         decimal: true,
                       ),
                       decoration: const InputDecoration(
-                        labelText: 'Paper starting cash',
+                        labelText: 'Paper cash',
                         helperText:
-                            'Used on reset only. A live Alpaca balance is not changed.',
+                            'Local simulator only. Alpaca funds are not changed. Live mode must be off.',
                       ),
-                      onEditingComplete: () {
-                        _applyPaperCash();
-                        _save(silent: true);
+                      onEditingComplete: _applyPaperCash,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final amount in <double>[
+                          100,
+                          500,
+                          1000,
+                          2500,
+                          5000,
+                          10000,
+                          25000,
+                          50000,
+                        ])
+                          ActionChip(
+                            label: Text('\$${amount.toStringAsFixed(0)}'),
+                            onPressed: () {
+                              _paperCash.text = amount.toStringAsFixed(0);
+                              _setPaperCash(amount);
+                            },
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.icon(
+                      onPressed: () {
+                        final parsed = double.tryParse(
+                          _paperCash.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+                        );
+                        if (parsed == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Enter a paper cash amount first.'),
+                            ),
+                          );
+                          return;
+                        }
+                        _setPaperCash(parsed);
                       },
+                      icon: const Icon(Icons.account_balance_wallet, size: 16),
+                      label: const Text('Set paper cash'),
                     ),
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
@@ -878,17 +978,89 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  String _scaleCaption(AppState st, AppSettings s) {
+    if (!s.scaleWithBalance) {
+      return 'Scaling is off. Size uses the current equity, and a large '
+          'balance does not add lower-priced names.';
+    }
+    final plan = scalePlan(
+      account: st.account,
+      settings: s,
+      dayTradeCount: 0,
+    );
+    return plan.summary;
+  }
+
   String _budgetCaption(AppState st, AppSettings s) {
-    final maxPx = maxAffordableSharePrice(st.account, s.risk);
+    final maxPx = maxAffordableSharePrice(
+      st.account,
+      s.risk,
+      sizingEquity: s.scaleWithBalance ? dayStartEquityOf(st.account) : null,
+    );
     final ceiling = s.budgetShareCeiling <= 0 ? 5.0 : s.budgetShareCeiling;
     if (st.account.equity <= 0 && st.account.buyingPower <= 0) {
       return 'Connect an account or start paper trading to see the share-price cap.';
     }
     return 'Right now one new share can cost up to ${TrTheme.money(maxPx)} '
-        '(${s.risk.maxPositionPct.round()}% of equity, or buying power if that '
-        'is lower). Backup names prefer ${TrTheme.money(ceiling)} and under. '
-        'The \$25,000 paper account can still buy the default watchlist — use '
-        'Preview with \$100 to see this kick in.';
+        '(${s.risk.maxPositionPct.round()}% of today\'s start, or buying power '
+        'if that is lower). Backup names prefer ${TrTheme.money(ceiling)} and '
+        'under. Set paper cash to try \$100, \$1,000, or \$25,000. A larger '
+        'balance still scans some lower-priced names when scaling is on.';
+  }
+
+  Future<void> _setPaperCash(double amount) async {
+    if (amount < 10) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter at least \$10 of paper cash.')),
+      );
+      return;
+    }
+    if (widget.state.settings.liveTrading) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Live mode is on. Switch to paper before changing test cash.',
+          ),
+        ),
+      );
+      return;
+    }
+    final shown = amount.toStringAsFixed(0);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: TrTheme.surface,
+        title: Text('Set paper cash to \$$shown?'),
+        content: Text(
+          'Replaces the local simulator with \$$shown and clears its positions. '
+          'Alpaca funds are not changed. The next scan sizes from this balance. '
+          'This does not guarantee a profit.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Use \$$shown'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    widget.state.settings.paperStartingCash = amount;
+    widget.state.settings.useLocalPaper = true;
+    _paperCash.text = shown;
+    widget.state.budget.clear();
+    await _save(silent: true);
+    await widget.state.resetPaperAccount();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Paper account is \$$shown.')),
+    );
   }
 
   Future<void> _previewSmallAccount() async {

@@ -42,6 +42,10 @@ class AppSettings {
     this.dayTradeEdge = true,
     this.minTargetPct = 1.0,
     this.flattenBeforeClose = true,
+    this.scaleWithBalance = true,
+    this.allowConvictionRisk = true,
+    this.allowOvernightHolds = false,
+    this.useLocalPaper = false,
   })  : keys = keys ?? const TradingKeys(keyId: '', secretKey: ''),
         watchlist = watchlist ?? List<String>.from(defaultWatchlist),
         risk = risk ?? const RiskConfig(),
@@ -91,6 +95,23 @@ class AppSettings {
   /// Sell open positions in the last 15 minutes of the session.
   bool flattenBeforeClose;
 
+  /// Size and strategy band from today's starting equity, not the intraday
+  /// mark. A gain or a setback changes the next session, not the middle of
+  /// one. Does not guarantee a profit.
+  bool scaleWithBalance;
+
+  /// A strong percentage setup may use up to 2× the risk-per-trade setting.
+  /// Quiet setups stay at the normal size.
+  bool allowConvictionRisk;
+
+  /// Leave positions open past the close. Off by default. Not a long-term
+  /// system, and not options trading.
+  bool allowOvernightHolds;
+
+  /// Use the local simulator even if Alpaca paper keys are saved. Live mode
+  /// still uses the broker. Set when the user picks a test cash amount.
+  bool useLocalPaper;
+
   bool get liveTrading => brokerMode == BrokerMode.live && keys.isConfigured;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -114,6 +135,10 @@ class AppSettings {
         'dayTradeEdge': dayTradeEdge,
         'minTargetPct': minTargetPct,
         'flattenBeforeClose': flattenBeforeClose,
+        'scaleWithBalance': scaleWithBalance,
+        'allowConvictionRisk': allowConvictionRisk,
+        'allowOvernightHolds': allowOvernightHolds,
+        'useLocalPaper': useLocalPaper,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -172,6 +197,14 @@ class AppSettings {
           defaults.minTargetPct,
       flattenBeforeClose:
           json['flattenBeforeClose'] as bool? ?? defaults.flattenBeforeClose,
+      scaleWithBalance:
+          json['scaleWithBalance'] as bool? ?? defaults.scaleWithBalance,
+      allowConvictionRisk: json['allowConvictionRisk'] as bool? ??
+          defaults.allowConvictionRisk,
+      allowOvernightHolds: json['allowOvernightHolds'] as bool? ??
+          defaults.allowOvernightHolds,
+      useLocalPaper:
+          json['useLocalPaper'] as bool? ?? defaults.useLocalPaper,
     );
   }
 }

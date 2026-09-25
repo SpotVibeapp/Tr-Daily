@@ -50,6 +50,12 @@ class ServerConfig {
     final minTargetPct = double.tryParse(env['MIN_TARGET_PCT'] ?? '1.0') ?? 1.0;
     final flattenBeforeClose =
         (env['FLATTEN_BEFORE_CLOSE'] ?? 'true').toLowerCase() != 'false';
+    final scaleWithBalance =
+        (env['SCALE_WITH_BALANCE'] ?? 'true').toLowerCase() != 'false';
+    final allowConvictionRisk =
+        (env['ALLOW_CONVICTION_RISK'] ?? 'true').toLowerCase() != 'false';
+    final allowOvernightHolds =
+        (env['ALLOW_OVERNIGHT_HOLDS'] ?? 'false').toLowerCase() == 'true';
 
     final dpStr = (env['DATA_PROVIDER'] ?? 'auto').toLowerCase();
     final dataProvider = switch (dpStr) {
@@ -79,6 +85,9 @@ class ServerConfig {
       dayTradeEdge: dayTradeEdge,
       minTargetPct: minTargetPct,
       flattenBeforeClose: flattenBeforeClose,
+      scaleWithBalance: scaleWithBalance,
+      allowConvictionRisk: allowConvictionRisk,
+      allowOvernightHolds: allowOvernightHolds,
       risk: RiskConfig(
         riskPerTradePct: riskPerTrade,
         maxDailyLossPct: maxDailyLoss,

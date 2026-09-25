@@ -3,6 +3,7 @@ import 'package:tr_daily/core/config.dart';
 import 'package:tr_daily/data/market_data_source.dart';
 import 'package:tr_daily/data/models.dart';
 import 'package:tr_daily/engine/budget.dart';
+import 'package:tr_daily/engine/scale.dart';
 import 'package:tr_daily/risk/risk_manager.dart';
 
 SignalScore sig(String symbol, double price) => SignalScore(
@@ -135,6 +136,40 @@ void main() {
       expect(advice.active, isFalse);
       expect(advice.sleeve, isEmpty);
       expect(advice.maxSharePrice, 6250);
+    });
+
+    test('large account still scans lower-priced names when scaling is on',
+        () async {
+      final session = BudgetSession(
+        quotesFor: (_) async => const <String, double>{
+          'NOK': 3.2,
+          'F': 12,
+          'T': 22,
+          'INTC': 40,
+        },
+      );
+      final settings = AppSettings(
+        watchlist: <String>['AAPL', 'NVDA'],
+        scaleWithBalance: true,
+      );
+      final account = cash(25000);
+      final plan = scalePlan(
+        account: account,
+        settings: settings,
+        dayTradeCount: 0,
+      );
+      final advice = await session.advise(
+        settings: settings,
+        account: account,
+        watchlistSignals: <SignalScore>[sig('AAPL', 190), sig('NVDA', 120)],
+        source: SyntheticMarketSource(),
+        plan: plan,
+      );
+      expect(plan.keepLowerPriced, isTrue);
+      expect(advice.sleeve, contains('NOK'));
+      expect(advice.sleeve, contains('F'));
+      expect(advice.skipped, isEmpty);
+      expect(advice.summary, contains('lower-priced'));
     });
 
     test('100 dollar account skips mega-caps and scans sub-5 names', () async {

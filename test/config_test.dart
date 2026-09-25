@@ -79,6 +79,10 @@ void main() {
       expect(back.dayTradeEdge, isTrue);
       expect(back.minTargetPct, 1.0);
       expect(back.flattenBeforeClose, isTrue);
+      expect(back.scaleWithBalance, isTrue);
+      expect(back.allowConvictionRisk, isTrue);
+      expect(back.allowOvernightHolds, isFalse);
+      expect(back.useLocalPaper, isFalse);
     });
 
     test('notifications survive json roundtrip', () {

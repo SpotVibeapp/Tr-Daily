@@ -86,6 +86,25 @@ void main() {
       expect(v.suggestedQty! * 4, lessThanOrEqualTo(25));
     });
 
+    test('sizes from the day-start equity, not an intraday gain', () {
+      final rm = RiskManager(config: const RiskConfig());
+      final upOnTheDay = acct(equity: 5000, bp: 5000);
+      final v = rm.entry(
+        account: upOnTheDay,
+        positions: const [],
+        price: 400,
+        atr: 4,
+        stance: Stance.long,
+        confidence: 0.9,
+        day: DateTime(2026, 6, 10, 10),
+        sizingEquity: 1000,
+      );
+      // 25% of today's start ($1,000) is $250. $400 does not fit, even
+      // though the marked equity would allow it.
+      expect(v.allowed, isFalse);
+      expect(v.haltReason, contains('exceeds budget'));
+    });
+
     test('denies when confidence below threshold', () {
       final rm = RiskManager(
           config: const RiskConfig(minConfidenceToTrade: 0.5));
